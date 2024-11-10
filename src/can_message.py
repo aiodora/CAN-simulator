@@ -28,6 +28,9 @@ class CANMessage:
         return control_field
 
     def calculate_crc(self): 
+        if self.identifier is None:
+            return 0
+        
         polynomial = 0b1100000000000011
         crc = 0
 
@@ -48,6 +51,52 @@ class CANMessage:
 
         return crc
     
+    def detect_crc_error(self, received_crc):
+        return self.crc != received_crc 
+    
+    def inject_error(self, error_type="crc"):
+        if error_type == "crc":
+            self.crc ^= 0x1 
+        elif error_type=="data":
+            if self.data_field: 
+                self.data_field[0] ^= 0xFF
+        elif error_type == "ack":
+            self.ack_slot = 1 
+
+    def frame_check(self):
+        if self.crc_delimiter != 1 or self.ack_delimiter != 1 or len(self.end_of_frame) != 7 or len(self.intermission) != 3:
+            return True
+        
+        return False
+    
+    def get_bitstream(self):
+        bitstream = []
+        
+        bitstream.append(self.start_of_frame)
+        
+        identifier_bits = [int(b) for b in f"{self.identifier:011b}"]
+        bitstream.extend(identifier_bits)
+        bitstream.append(self.rtr)
+        
+        control_field_bits = [int(b) for b in self.control_field]
+        bitstream.extend(control_field_bits)
+        
+        if self.data_field:
+            for byte in self.data_field: 
+                byte_bits = [int(b) for b in f"{byte:08b}"]
+                bitstream.extend(byte_bits)
+
+        crc_bits = [int(b) for b in f"{self.crc:015b}"]
+        bitstream.extend(crc_bits)
+
+        bitstream.append(self.crc_delimiter)
+        bitstream.append(self.ack_slot)
+        bitstream.append(self.ack_delimiter)
+        bitstream.append(self.end_of_frame)
+        bitstream.append(self.intermission)
+
+        return bitstream
+    
     def __repr__(self):
         return (f"CANMessage(id={self.identifier}, data={self.data_field}, "
                 f"crc={self.crc}, frame_type={self.rtr})")
@@ -63,9 +112,20 @@ class RemoteFrame(CANMessage):
 class ErrorFrame(CANMessage):
     def __init__(self):
         super().__init__(identifier=None, data=None, frame_type="Error")
+        self.error_flag = [0] * 6 + [1]
+        self.error_delimiter = [1] * 8
+
+    def get_bitstream(self):
+        return self.error_flag + self.error_delimiter
+
+    def __repr__(self):
+        return "ErrorFrame(error_flag={})".format(self.error_flag)
 
 class OverloadFrame(CANMessage):
     def __init__(self):
         super().__init__(identifier=None, data=None, frame_type="Overload")
         self.overload_flag = [1] * 6
+
+    def __repr__(self):
+        return "OverloadFrame(overload_flag={})".format(self.overload_flag)
         
