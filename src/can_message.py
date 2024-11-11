@@ -6,7 +6,7 @@ class CANMessage:
         if frame_type == "Data": self.rtr = 0
         else: self.rtr = 1
         self.control_field = self.calculate_control_field(data)
-        if data: self.data_field = data
+        if data: self.data_field = data #at most 8 bytes
         else: self.data_field = []
         self.crc = self.calculate_crc()
         self.crc_delimiter = 1
@@ -51,23 +51,22 @@ class CANMessage:
 
         return crc
     
-    def detect_crc_error(self, received_crc):
-        return self.crc != received_crc 
-    
-    def inject_error(self, error_type="crc"):
-        if error_type == "crc":
-            self.crc ^= 0x1 
-        elif error_type=="data":
-            if self.data_field: 
-                self.data_field[0] ^= 0xFF
-        elif error_type == "ack":
-            self.ack_slot = 1 
-
-    def frame_check(self):
-        if self.crc_delimiter != 1 or self.ack_delimiter != 1 or len(self.end_of_frame) != 7 or len(self.intermission) != 3:
-            return True
-        
-        return False
+    def apply_bit_stuffing(self, bitstream):
+        stuffed_bits = []
+        consecutive_bits = 1
+        last_bit = bitstream[0]
+        for bit in bitstream[1:]:
+            if bit == last_bit:
+                consecutive_bits += 1
+            else:
+                consecutive_bits = 1
+            stuffed_bits.append(last_bit)
+            if consecutive_bits == 5:
+                stuffed_bits.append(1 - last_bit) 
+                consecutive_bits = 1
+            last_bit = bit
+        stuffed_bits.append(last_bit)
+        return stuffed_bits
     
     def get_bitstream(self):
         bitstream = []
