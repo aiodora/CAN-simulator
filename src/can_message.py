@@ -14,6 +14,7 @@ class CANMessage:
         self.ack_delimiter = 1 
         self.end_of_frame = [1] * 7 
         self.intermission = [1] * 3
+        self.error_type = None
 
     def calculate_control_field(self, data):
         if data: data_length_code = min(len(data), 8)
@@ -122,13 +123,17 @@ class ErrorFrame(CANMessage):
         return self.error_flag + self.error_delimiter
 
     def __repr__(self):
-        return "ErrorFrame(error_flag={})".format(self.error_flag)
+        return "ErrorFrame(error_flag={}, error_delimiter={})".format(self.error_flag, self.error_delimiter)
 
 class OverloadFrame(CANMessage):
     def __init__(self):
         super().__init__(identifier=None, data=None, frame_type="Overload")
-        self.overload_flag = [1] * 6
+        self.overload_flag = [0] * 6
+        self.overload_delimiter = [1] * 8 
+
+    def get_bistream(self):
+        return self.overload_flag + self.overload_delimiter
 
     def __repr__(self):
-        return "OverloadFrame(overload_flag={})".format(self.overload_flag)
+        return "OverloadFrame(overload_flag={}, overload_delimiter={})".format(self.overload_flag, self.overload_delimiter)
         

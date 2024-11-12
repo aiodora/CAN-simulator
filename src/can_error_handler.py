@@ -57,14 +57,21 @@ class CANErrorHandler:
     def inject_error(self, error_type, message):
         if error_type == "bit":
             message.data_field[0] ^= 0xFF 
+            message.error_type = "bit"
         elif error_type == "stuff":
             message.data_field.extend([1] * 6) 
+            message.error_type = "stuff"
         elif error_type == "ack":
             message.ack_slot = 1 
+            message.error_type = "ack"
         elif error_type == "crc":
             message.crc ^= 0x1
+            message.error_type = "crc"
         elif error_type == "frame_check":
             message.crc_delimiter = 0 
             message.ack_delimiter = 0
             message.end_of_frame = [0] * 7
             message.intermission = [0] * 3
+            message.error_type = "frame_check"
+        #print(f"\nAfter: {message.frame_type} {message.error_type}")
+

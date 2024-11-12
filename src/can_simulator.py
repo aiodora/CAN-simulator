@@ -40,7 +40,7 @@ class CANSimulatorApp(tk.Tk):
         control_frame.pack()
 
         for node_id in self.nodes:
-            btn = tk.Button(control_frame, text=f"Send from node {node_id}", command=lambda n=node_id: self.send_message(n, 10, f"Message from Node {n}"))    
+            btn = tk.Button(control_frame, text=f"Send from node {node_id}", command=lambda n=node_id: self.send_message(n, 10, [1, 2, 3, 4]))    
             btn.pack(side=tk.LEFT, padx=5)
 
     def send_message(self, node_id, message_id, data):

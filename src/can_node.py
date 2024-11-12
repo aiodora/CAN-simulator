@@ -1,19 +1,21 @@
-from can_message import DataFrame, ErrorFrame
+from can_message import DataFrame, ErrorFrame, RemoteFrame, OverloadFrame
 from can_error_handler import CANErrorHandler
 import random
+import time
 
 class CANNode:
-    def __init__(self, node_id, message_interval=5000, filters=None, bus=None):
+    def __init__(self, node_id, message_interval=5000, produced_ids=None, filters=None, bus=None):
         self.node_id = node_id
         self.bus = bus
         self.message_interval = message_interval
         self.message_queue = [] 
-        self.filters = filters if filters else list(range(0, 2048))
+        self.produced_ids = produced_ids if produced_ids else list(range(0, 2047))
+        self.filters = filters if filters else list(range(0, 2047))
         self.state = "Error Active"
         self.transmit_error_counter = 0
         self.receive_error_counter = 0
         self.error_handler = CANErrorHandler()
-        self.current_bit_index = 0 
+        self.current_bit_index = 0
 
     def set_bus(self, bus):
         self.bus = bus
@@ -50,10 +52,27 @@ class CANNode:
             self.receive_error_counter = 0
             self.state = "Error Active"
 
-    def send_message(self, message_id, data=None):
+    def send_message(self, message_id=None, data=None, frame_type="data", error_type=None):
         if self.state == "Bus Off" or self.state == "Error Passive":
             return
-        message = DataFrame(message_id, data)
+        
+        if frame_type == "data":
+            message = DataFrame(message_id, data)
+        elif frame_type == "remote":
+            message = RemoteFrame(message_id)
+        elif frame_type == "error":
+            message = ErrorFrame()
+        elif frame_type == "overload":
+            message = OverloadFrame()
+        else:
+            print("Invalid frame type specified.")
+            return
+        
+        if error_type:
+            print(f"Injecting {error_type} error into message.")
+            self.error_handler.inject_error(error_type, message)
+            message.error_type = error_type
+        
         message_bitstream = message.get_bitstream()
         self.message_queue.append((message, message_bitstream))
         self.current_bit_index = 0
@@ -98,15 +117,47 @@ class CANNode:
             self.send_error_frame()
 
     def receive_message(self, message):
+        if self.error_handler.bit_stuffing_check(message.get_bitstream()):
+            print(f"Node {self.node_id} detected Bit Stuffing Error.")
+            self.increment_rec() 
+            return False
+        
         unstuffed_bitstream = self.unstuff_bits(message.get_bitstream())
 
+        if not self.error_handler.frame_check(message):
+            print(f"Node {self.node_id} detected Frame Check Error.")
+            self.increment_rec()
+            return False 
+        
+        if self.state == "Error Active":
+            message.ack_slot = 0
+            if self.error_handler.acknowledgement_check(message):
+                print(f"Node {self.node_id} detected Acknowledgment Error.")
+                self.increment_tec() 
+                return False
+            
+        calculated_crc = message.calculate_crc()
+        if self.error_handler.crc_check(message, calculated_crc):
+            print(f"Node {self.node_id} detected CRC Error.")
+            self.increment_rec()
+            return False 
+        
         if self.state == "Error Active":
             message.ack_slot = 0 
 
-        if message.identifier in self.filters:
-            print(f"Node {self.node_id} received and processed message with ID {message.identifier}")
-        else: 
-            print(f"Node {self.node_id} received message with ID {message.identifier}")
+        if isinstance(message, DataFrame):
+            if message.identifier in self.filters:
+                print(f"Node {self.node_id} received and processed message with ID {message.identifier}")
+            else: 
+                print(f"Node {self.node_id} received message with ID {message.identifier}")
+        elif isinstance(message, RemoteFrame):
+            if message.identifier in self.filters: 
+                print(f"Node {self.node_id} received Remote Frame with ID {message.identifier} and is responding.")
+                response_data = [random.randint(0, 255) for _ in range(8)]
+                self.send_message(message.identifier, response_data, frame_type="data")
+            else: 
+                print(f"Node {self.node_id} received Remote Frame with ID {message.identifier} but is not the producer.")
+
         self.decrement_counters()
         return True
     
@@ -134,8 +185,14 @@ class CANNode:
             self.message_queue.pop(0)
 
     def handle_error_frame(self):
+        print(f"Node {self.node_id} detected Error Frame; discarding current message.")
         self.discard_message()
         self.increment_rec()
+
+    def handle_overload_frame(self):
+        print(f"Node {self.node_id} detected Overload Frame; transmission delayed temporarily.")
+        self.discard_message()
+        #time.sleep(0.1)
 
     def has_pending_message(self):
         return len(self.message_queue) > 0
