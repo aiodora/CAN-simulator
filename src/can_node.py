@@ -26,6 +26,12 @@ class CANNode:
         self.receive_error_counter += 1
         self.check_state_transition()
 
+    def decrement_counters(self):
+        if self.transmit_error_counter > 0:
+            self.transmit_error_counter -= 1 
+        if self.receive_error_counter > 0: 
+            self.receive_error_counter -= 1 
+
     def check_state_transition(self):
         if self.transmit_error_counter >= 255 or self.receive_error_counter >= 255:
             self.state = "Bus Off"
@@ -92,14 +98,16 @@ class CANNode:
             self.send_error_frame()
 
     def receive_message(self, message):
-        if not self.is_message_relevant(message.identifier):
-            return False
-        if self.error_handler.crc_check(message, message.calculate_crc()):
-            self.increment_rec()
-            self.send_error_frame()
-            return False
+        unstuffed_bitstream = self.unstuff_bits(message.get_bitstream())
+
         if self.state == "Error Active":
             message.ack_slot = 0 
+
+        if message.identifier in self.filters:
+            print(f"Node {self.node_id} received and processed message with ID {message.identifier}")
+        else: 
+            print(f"Node {self.node_id} received message with ID {message.identifier}")
+        self.decrement_counters()
         return True
     
     def unstuff_bits(self, bitstream):
@@ -118,11 +126,15 @@ class CANNode:
         return unstuffed_bits
 
     def send_error_frame(self):
-        if self.bus:
-            error_frame = ErrorFrame()
-            self.bus.broadcast_error_frame(error_frame)
+        error_frame = ErrorFrame()
+        self.bus.broadcast_error_frame(error_frame)
 
-    def handle_error_frame(self, error_frame):
+    def discard_message(self):
+        if self.message_queue:
+            self.message_queue.pop(0)
+
+    def handle_error_frame(self):
+        self.discard_message()
         self.increment_rec()
 
     def has_pending_message(self):

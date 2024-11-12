@@ -73,8 +73,10 @@ class CANMessage:
         
         bitstream.append(self.start_of_frame)
         
-        identifier_bits = [int(b) for b in f"{self.identifier:011b}"]
-        bitstream.extend(identifier_bits)
+        if self.identifier is not None:
+            identifier_bits = [int(b) for b in f"{self.identifier:011b}"]
+            bitstream.extend(identifier_bits)
+
         bitstream.append(self.rtr)
         
         control_field_bits = [int(b) for b in self.control_field]
@@ -93,6 +95,8 @@ class CANMessage:
         bitstream.append(self.ack_delimiter)
         bitstream.append(self.end_of_frame)
         bitstream.append(self.intermission)
+
+        bitstream = self.apply_bit_stuffing(bitstream)
 
         return bitstream
     
