@@ -34,7 +34,7 @@ def run_tests():
     bus.simulate_step() 
     bus.simulate_step()
 
-    print("\n")
+    print("\nNo new messages added:")
     bus.simulate_step()
 
     print("\nIV. Remote Frame Transmission")
@@ -50,12 +50,12 @@ def run_tests():
     node3.send_message(None, None, "overload")
     bus.simulate_step()
 
-    test_all_errors(bus, node1)
+    #test_all_errors(bus, node1)
 
 def test_all_errors(bus, node):
     print("\nTesting Error Detection Mechanisms")
 
-    #need to keep working on these 2 
+    #need to keep working on the first 2 
     # print("\n\t Bit Monitoring Error")
     # node.send_message(800, [1, 1, 1, 1], error_type="bit")
     # bus.simulate_step()
@@ -64,17 +64,18 @@ def test_all_errors(bus, node):
     # node.send_message(101, [0x1F, 0x1F, 0x1F], error_type="stuff")
     # bus.simulate_step()
 
-    print("\n\t Frame Check Error")
-    node.send_message(102, [2, 2, 2, 2], error_type="frame_check")
-    bus.simulate_step()
+    # print("\n\t Frame Check Error")
+    # node.send_message(102, [2, 2, 2, 2], error_type="frame_check")
+    # node.increment_tec()
+    # bus.simulate_step()
 
-    print("\n\t Acknowledgment Error")
-    node.send_message(103, [3, 3, 3, 3], error_type="ack")
-    bus.simulate_step()
+    # print("\n\t Acknowledgment Error")
+    # node.send_message(103, [3, 3, 3, 3], error_type="ack")
+    # bus.simulate_step()
 
-    print("\n\t CRC Check Error")
-    node.send_message(104, [4, 4, 4, 4], frame_type="data", error_type="crc")
-    bus.simulate_step()
+    # print("\n\t CRC Check Error")
+    # node.send_message(104, [4, 4, 4, 4], frame_type="data", error_type="crc")
+    # bus.simulate_step()
 
 if __name__ == "__main__":
     run_tests()

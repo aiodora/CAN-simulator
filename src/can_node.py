@@ -3,6 +3,10 @@ from can_error_handler import CANErrorHandler
 import random
 import time
 
+TRANSMITTING = "transmitting"
+RECEIVING = "receiving"
+WAITING ="waiting"
+
 class CANNode:
     def __init__(self, node_id, message_interval=5000, produced_ids=None, filters=None, bus=None):
         self.node_id = node_id
@@ -16,6 +20,7 @@ class CANNode:
         self.receive_error_counter = 0
         self.error_handler = CANErrorHandler()
         self.current_bit_index = 0
+        self.state = WAITING
 
     def set_bus(self, bus):
         self.bus = bus
@@ -117,9 +122,11 @@ class CANNode:
             self.send_error_frame()
 
     def receive_message(self, message):
+        self.state = RECEIVING
         if self.error_handler.bit_stuffing_check(message.get_bitstream()):
             print(f"Node {self.node_id} detected Bit Stuffing Error.")
             self.increment_rec() 
+            self.state = WAITING
             return False
         
         unstuffed_bitstream = self.unstuff_bits(message.get_bitstream())
@@ -127,6 +134,7 @@ class CANNode:
         if not self.error_handler.frame_check(message):
             print(f"Node {self.node_id} detected Frame Check Error.")
             self.increment_rec()
+            self.state = WAITING
             return False 
         
         if self.state == "Error Active":
@@ -134,12 +142,14 @@ class CANNode:
             if self.error_handler.acknowledgement_check(message):
                 print(f"Node {self.node_id} detected Acknowledgment Error.")
                 self.increment_tec() 
+                self.state = WAITING
                 return False
             
         calculated_crc = message.calculate_crc()
         if self.error_handler.crc_check(message, calculated_crc):
             print(f"Node {self.node_id} detected CRC Error.")
             self.increment_rec()
+            self.state = WAITING
             return False 
         
         if self.state == "Error Active":
@@ -151,7 +161,7 @@ class CANNode:
             else: 
                 print(f"Node {self.node_id} received message with ID {message.identifier}")
         elif isinstance(message, RemoteFrame):
-            if message.identifier in self.filters: 
+            if message.identifier in self.produced_ids: 
                 print(f"Node {self.node_id} received Remote Frame with ID {message.identifier} and is responding.")
                 response_data = [random.randint(0, 255) for _ in range(8)]
                 self.send_message(message.identifier, response_data, frame_type="data")
@@ -159,6 +169,7 @@ class CANNode:
                 print(f"Node {self.node_id} received Remote Frame with ID {message.identifier} but is not the producer.")
 
         self.decrement_counters()
+        self.state = WAITING
         return True
     
     def unstuff_bits(self, bitstream):
