@@ -1,3 +1,5 @@
+import random
+
 class CANMessage:
     def __init__(self, identifier, data=None, frame_type="Data"):
         self.start_of_frame = 1 
@@ -12,7 +14,7 @@ class CANMessage:
         self.crc_delimiter = 1
         self.ack_slot = 1 
         self.ack_delimiter = 1 
-        self.end_of_frame = [1] * 7 
+        self.end_of_frame = [1] * 7
         self.intermission = [1] * 3
         self.error_type = None
 
@@ -104,6 +106,46 @@ class CANMessage:
     def __repr__(self):
         return (f"CANMessage(id={self.identifier}, data={self.data_field}, "
                 f"crc={self.crc}, frame_type={self.rtr})")
+    
+    #monitor error; to refine
+    def corrupt_bit(self):
+        bitstream = self.get_bitstream()
+        identifier_length = 11 
+        start_of_corruptible_bits = identifier_length + 2 
+        
+        if len(bitstream) > start_of_corruptible_bits:
+            bit_to_flip = random.randint(start_of_corruptible_bits, len(bitstream) - 1)
+            bitstream[bit_to_flip] = not bitstream[bit_to_flip]
+            print(f"Bit {bit_to_flip} corrupted (excluding identifier).")
+            self.error_type = "bit_error"
+
+    #stuff error 
+    def corrupt_stuff(self):
+        bitstream = self.get_bitstream()
+        identifier_length = 11 
+        start_of_corruptible_bits = identifier_length + 2
+
+        if len(bitstream) > start_of_corruptible_bits + 5:
+            insert_index = random.randint(start_of_corruptible_bits, len(bitstream) - 5)
+            bit_to_duplicate = bitstream[insert_index]
+            bitstream.insert(insert_index + 5, bit_to_duplicate)
+            print(f"Bit stuffing error injected at index {insert_index + 5} (excluding identifier).")
+            self.error_type = "stuff_error"
+
+    #crc error
+    def corrupt_crc(self):
+        self.crc ^= 0x1  
+        self.error_type = "crc_error"
+
+    #ack error
+    def corrupt_ack(self): 
+        self.ack_slot = 1
+        self.error_type = "ack_error"
+
+    #form error
+    def corrupt_form(self): 
+        self.end_of_frame = [0] * 7  
+        self.error_type = "form_error"
     
 class DataFrame(CANMessage):
     def __init__(self, identifier, data):

@@ -1,132 +1,150 @@
-from can_node import CANNode, TRANSMITTING, RECEIVING, WAITING
+from can_node import CANNode, WAITING, TRANSMITTING, RECEIVING, BUS_OFF 
 from can_message import DataFrame, ErrorFrame, OverloadFrame, RemoteFrame
-from can_error_handler import CANErrorHandler
-import time
+import random 
 
 class CANBus:
     def __init__(self):
-        self.nodes = []
-        self.error_handler = CANErrorHandler()
+        self.nodes = []  
+        self.current_bit = 1 #by default the current bit that is sent is 1 
+        self.in_arbitration = False  
 
-    def add_node(self, node):
+    def connect_node(self, node):
         self.nodes.append(node)
         node.set_bus(self)
-        node.state = WAITING
-        print(f"Node {node.node_id} added to CAN bus.")
+        print(f"Node {node.node_id} connected to the bus.")
 
     def simulate_step(self):
-        for node in self.nodes: 
-            if node.has_pending_message():
-                message, _ = node.message_queue[0]
+        nodes_with_messages = [node for node in self.nodes if node.has_pending_message()]
 
-                #print(f"Before checking: {message.frame_type} {message.error_type}")
-                if isinstance(message, (ErrorFrame, OverloadFrame)):
-                    #print("Detected ErrorFrame or OverloadFrame")
-                    self.deliver_message(node)
-                    #node.message_queue.pop(0) #discarding the message here 
-                    return
-                #print(f"After checking: {message.frame_type} {message.error_type}")
-
-        competing_nodes = [(node, node.message_queue[0][0]) 
-                        for node in self.nodes 
-                        if node.has_pending_message() and not isinstance(node.message_queue[0][0], (ErrorFrame, OverloadFrame))]
-
-        if not competing_nodes:
+        if not nodes_with_messages:
             print("No nodes with pending messages.")
             return
-        elif len(competing_nodes) == 1:
-            node, message = competing_nodes[0]
-            node.state = TRANSMITTING
-            self.deliver_message(node)
-            return
 
-        competing_nodes.sort(key=lambda x: x[1].identifier)
-        winner_node, winning_message = competing_nodes[0]
+        for node in nodes_with_messages:
+            message, _ = node.message_queue[0]
+            if isinstance(message, ErrorFrame):
+                print(f"Node {node.node_id} broadcasting an Error Frame.")
+                self.broadcast_error_frame(message.error_type or "generic_error")
+                node.message_queue.pop(0) 
+                node.mode = WAITING
+                return
+            elif isinstance(message, OverloadFrame):
+                print(f"Node {node.node_id} broadcasting an Overload Frame.")
+                self.broadcast_overload_frame()
+                node.message_queue.pop(0) 
+                node.mode = WAITING
+                return
+            
+        for node in nodes_with_messages: 
+            node.mode = RECEIVING
 
-        print(f"Node {winner_node.node_id} won arbitration with message ID {winning_message.identifier}")
-        winner_node.state = TRANSMITTING
-        self.deliver_message(winner_node)
+        if len(nodes_with_messages) == 1: #only one node tries to transmit
+            winner_node = nodes_with_messages[0]
+        else: #more nodes try to send at the same time
+            self.in_arbitration = True
+            winner_node = self.perform_arbitration(nodes_with_messages)
+            self.in_arbitration = False
+
+        if winner_node:
+            self.deliver_message(winner_node)
+
+        for node in self.nodes:
+            node.mode = WAITING
+
+    def perform_arbitration(self, nodes_with_messages):
+        nodes_with_messages.sort(key=lambda node: node.message_queue[0][0].identifier)
+        winner_node = nodes_with_messages[0]
+        print(f"Node {winner_node.node_id} won arbitration with ID {winner_node.message_queue[0][0].identifier}.")
+        
+        for node in nodes_with_messages:
+            if node == winner_node:
+                node.mode = TRANSMITTING
+            else:
+                node.mode = RECEIVING
+        
+        return winner_node
 
     def deliver_message(self, winner_node):
-        if not winner_node.message_queue:
+        if not winner_node.has_pending_message():
             return
 
-        message, bitstream = winner_node.message_queue[0]
-        print(f"Delivering message with ID {message.identifier} from Node {winner_node.node_id} to all nodes. Error type: {message.error_type}")
-
-        for bit_index, transmitted_bit in enumerate(bitstream):
-            bus_bit = transmitted_bit
-            for node in self.nodes:
-                if node != winner_node:
-                    if node.transmit_bit() != transmitted_bit:
-                        node.stop_transmitting()
+        message, bitstream = winner_node.message_queue.pop(0)
+        print(f"Node {winner_node.node_id} is delivering message ID {message.identifier}.")
 
         ack_received = False
-        if isinstance(message, DataFrame) or isinstance(message, RemoteFrame):
-            for node in self.nodes:
-                if node != winner_node:
-                    node.state = RECEIVING
-                    if message.error_type == "bit" and node.error_handler.bit_monitoring(transmitted_bit, bus_bit):
-                        #print("Broadcasting bit error frame.")
-                        self.broadcast_error_frame("bit_error")
-                        return
-                    elif message.error_type == "stuff" and node.error_handler.bit_stuffing_check(bitstream):
-                        #print("Broadcasting stuffing error frame.")
-                        self.broadcast_error_frame("stuff_error")
-                        return
-                    elif message.error_type == "frame_check" and node.error_handler.frame_check(message):
-                        #print("Broadcasting frame check error.")
-                        self.broadcast_error_frame("frame_error")
-                        return
-                    elif message.error_type == "ack" and node.error_handler.acknowledgement_check(message):
-                        #print("Broadcasting acknowledgment error frame.")
-                        self.broadcast_error_frame("ack_error")
-                        ack_received = False
-                        #return
-                        break
-                    elif message.error_type == "crc" and node.error_handler.crc_check(message, message.calculate_crc()):
-                        #print("Broadcasting CRC error frame.")
-                        self.broadcast_error_frame("crc_error")
-                        return
-
-                    node.receive_message(message)
-                    ack_received = True
-
-            if ack_received:
-                #print("Message acknowledged by one or more nodes.")
-                winner_node.message_queue.pop(0)
-            else:
-                print("Acknowledgment Error Detected: No node acknowledged the message.")
-                self.broadcast_error_frame("ack_error")
-                
-        elif isinstance(message, ErrorFrame):
-            self.broadcast_error_frame("generic error") 
-        elif isinstance(message, OverloadFrame):
-            #print("Explicit overload frame broadcast.")
-            self.broadcast_overload_frame()
-
-    def determine_bus_bit(self, transmitted_bits):
-        return 0 if 0 in transmitted_bits else 1 
-
-    def broadcast_error_frame(self, error_type="Error Message"):
-        print(f"Error Frame Broadcasting due to {error_type}")
+        error_detected = False
         for node in self.nodes:
-            if error_type == "bit_error":
-                print("Bit Monitorig Error detected")
-            elif error_type == "stuff_error":
-                print("Bit Stuffing Error detected")
-            elif error_type == "form_error":
-                print("Form Error detected")
-            elif error_type == "ack_error":
-                print("Acknowledgment Error detected")
-            elif error_type == "crc_error":
-                print("CRC Error detected")
-            node.handle_error_frame()
+            if node == winner_node:
+                continue
+            error_detected = node.detect_and_handle_error(message) or error_detected
+
+        if error_detected and message.error_type != "ack_error":
+            winner_node.increment_transmit_error()
+        else:
+            for node in self.nodes:
+                if node != winner_node and node.state != BUS_OFF:
+                    node.receive_message(message)
+
+        if isinstance(message, RemoteFrame):
+            producers = [node for node in self.nodes if message.identifier in node.produced_ids]
+            responder = random.choice(producers) if producers else None
+
+            for node in self.nodes:
+                if node != winner_node and node.state != BUS_OFF:
+                    node.receive_message(message)
+
+                    if message.identifier in node.produced_ids:
+                        ack_received = True
+                        if node == responder:
+                            print(f"Node {node.node_id} responding to Remote Frame with ID {message.identifier}.")
+                            response_data = [random.randint(0, 255) for _ in range(8)]
+                            node.send_message(message.identifier, response_data, frame_type="data")
+                    else:
+                        ack_received = True 
+
+            if not producers:
+                print(f"No nodes available to respond to Remote Frame with ID {message.identifier}.")
+
+        else:
+            for node in self.nodes:
+                if node != winner_node and node.state != BUS_OFF:
+                    node.receive_message(message)
+                    if message.error_type == "ack_error":
+                        ack_received = False
+                    else:
+                        ack_received = True
+
+            if not ack_received:
+                print(f"Node {winner_node.node_id} detected an ACK Error.")
+                winner_node.increment_transmit_error()
+                self.broadcast_error_frame("ack_error")
+                winner_node.retransmit_message()
+
+        for node in self.nodes:
+            node.mode = WAITING
+
+    def broadcast_error_frame(self, error_type):
+        print(f"Broadcasting error frame for {error_type}.")
+        eligible_receivers = [node for node in self.nodes if node.mode == RECEIVING and node.state != BUS_OFF]
+        
+        if eligible_receivers:
+            reporter_node = random.choice(eligible_receivers)
+            print(f"Node {reporter_node.node_id} detected the {error_type} error and is reporting it.")
+            reporter_node.increment_receive_error()
+        # else:
+        #     print("No eligible receivers to report the error.")
+
+        for node in self.nodes:
+            if node.mode == TRANSMITTING:
+                print(f"Node {node.node_id} is the transmitter. Incrementing TEC for {error_type}.")
+                node.increment_transmit_error()
+
+
+    def get_current_bit(self):
+        return self.current_bit
 
     def broadcast_overload_frame(self):
-        print("Overload Frame Broadcasting")
-        #overload_frame = OverloadFrame()
+        print("Broadcasting overload frame.")
         for node in self.nodes:
             node.handle_overload_frame()
-        time.sleep(1)
-        print("Bus resuming operation.")
+        print("Overload frame processing complete.")

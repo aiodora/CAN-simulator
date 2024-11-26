@@ -1,0 +1,9 @@
+# This file is used internally by FFMPEG.
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/1185818338_1711287520_223132457.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_2103673791_3299046929.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_1260522303_3905599074.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_2989733559_1456028701.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_2121016543_3633206624.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_2621228593_3633206624.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_1141282389_2960706467.mp4'
+file 'file:C:/Users/ioana/OneDrive/Documents/Facultate/AN 3/SEM 1/Structure of Computer Systems/Project/Code/CANpy/src/media/videos/can_visuals/480p15/partial_movie_files/CANMessageFlow/624642324_2169993259_2289427176.mp4'
