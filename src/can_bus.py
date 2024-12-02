@@ -7,6 +7,7 @@ class CANBus:
         self.nodes = []  
         self.current_bit = 1 #by default the current bit that is sent is 1 
         self.in_arbitration = False  
+        self.error = False
 
     def connect_node(self, node):
         self.nodes.append(node)
@@ -73,6 +74,11 @@ class CANBus:
 
         ack_received = False
         error_detected = False
+        if message.error_type is None:
+            self.error = False
+        else:
+            self.error = True
+
         for node in self.nodes:
             if node == winner_node:
                 continue
@@ -108,7 +114,11 @@ class CANBus:
         else:
             for node in self.nodes:
                 if node != winner_node and node.state != BUS_OFF:
-                    node.receive_message(message)
+                    # if node.receive_message(message): 
+                    #     continue
+                    # else: 
+                    #     break
+
                     if message.error_type == "ack_error":
                         ack_received = False
                     else:
@@ -119,6 +129,13 @@ class CANBus:
                 winner_node.increment_transmit_error()
                 self.broadcast_error_frame("ack_error")
                 winner_node.retransmit_message()
+
+            if self.error == False:
+                for node in self.nodes: 
+                    if node == winner_node:
+                        node.decrement_transmit_error()
+                    else:
+                        node.decrement_receive_error()
 
         for node in self.nodes:
             node.mode = WAITING

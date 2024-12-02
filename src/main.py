@@ -51,30 +51,42 @@ def test_ack_error_detection():
 
     node1.send_message(message_id=103, data=[0x01, 0x02], error_type="ack_error")
     bus.simulate_step()
-    print(f"{node1.transmit_error_counter}")
-    print(f"{node2.receive_error_counter}")
-    print(f"{node3.receive_error_counter}")
-
+  
     assert node1.transmit_error_counter == 8, "TEC not incremented correctly for ACK error."
-    print(f"Node 1 TEC after ACK error: {node1.transmit_error_counter}")
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
 
 def test_state_transitions():
     bus, node1, node2, node3 = setup_can_network()
-
+    msg_id = 101; 
     for _ in range(16):  #16 * 8 = 128 > 127 -> node should go in Error Passive at the end of this for
-        node1.send_message(message_id=104, data=[0x01, 0x02], error_type="form_error")
+        node1.send_message(message_id=msg_id, data=[0x01, 0x02], error_type="form_error")
         bus.simulate_step()
+        print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+        print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+        print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+        msg_id += 1
 
     assert node1.state == "Error Passive", "Node 1 did not transition to ERROR_PASSIVE."
     print(f"Node 1 state after 16 errors: {node1.state}")
 
     for _ in range(16): #we were at 128 so 128 + (16 * 8) = 256 > 255 -> node should go in Bus Off at the end of this for
-        node1.send_message(message_id=105, data=[0x01, 0x02], error_type="form_error")
+        node1.send_message(message_id=msg_id, data=[0x01, 0x02], error_type="form_error")
         bus.simulate_step()
-        print(f"{node1.transmit_error_counter}")
+        print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+        print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+        print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+        msg_id += 1
 
     assert node1.state == "Bus Off", "Node 1 did not transition to BUS_OFF."
     print(f"Node 1 state after reaching BUS_OFF: {node1.state}")
+
+    print("Trying to send message from node 1 (it is in bus off state now)")
+    node1.send_message(message_id=msg_id, data=[0x01, 0x02])
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
 
 def test_retransmissions():
     bus, node1, node2, node3 = setup_can_network()
@@ -169,6 +181,12 @@ def test_stuffing_and_form_errors():
     print(f"Node 2 REC after form error: {node2.receive_error_counter}")
     print(f"Node 3 REC after form error: {node3.receive_error_counter}")
 
+    print("Sending correct message")
+    node1.send_message(message_id=103, data=[0x01, 0x02])
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+
 if __name__ == "__main__":
     print("Starting CAN Simulation Tests...")
     test_simple_frame_transmission()
@@ -177,8 +195,6 @@ if __name__ == "__main__":
     test_ack_error_detection()
     test_crc_error_detection()
     test_bit_error_detection()
-    #print("smth")
+    #print("a ajuns aici")
     test_stuffing_and_form_errors()
     test_state_transitions()
-    
-    print("All tests passed.")

@@ -53,6 +53,50 @@ class Playground(ctk.CTkFrame):
         self.bus_line = self.canvas.create_line(50, 580, 2050, 580, fill="lightgrey", width=5)
         self.canvas.create_text(80, 560, text="CAN Bus", fill="white", font=('Arial', 14, 'bold'))
 
+    def animate_message(self, sender_id, receiver_id):
+            if sender_id not in self.node_positions or receiver_id not in self.node_positions:
+                return
+
+            sender_pos = self.node_positions[sender_id]
+            receiver_pos = self.node_positions[receiver_id]
+
+            message = self.canvas.create_oval(
+                sender_pos[0] - 10, sender_pos[1] - 10, sender_pos[0] + 10, sender_pos[1] + 10,
+                fill="green", outline=""
+            )
+
+            def move_message(step=0):
+                dx = (receiver_pos[0] - sender_pos[0]) / 50
+                dy = (receiver_pos[1] - sender_pos[1]) / 50
+                self.canvas.move(message, dx, dy)
+
+                if step < 50:
+                    self.canvas.after(20, lambda: move_message(step + 1))
+                else:
+                    self.canvas.delete(message)
+                    self.glow_node(receiver_id)  
+
+            self.glow_node(sender_id, transmitting=True) 
+            move_message()
+
+    def glow_node(self, node_id, transmitting=False):
+        if node_id not in self.node_visuals:
+            return
+
+        color = "green" if transmitting else "red"
+        node_rect = self.node_visuals[node_id]["rect"]
+
+        def pulse(step=0):
+            glow_color = f"#{255 - step:02x}{255 - step:02x}00" if transmitting else f"#{255 - step:02x}00{255 - step:02x}"
+            self.canvas.itemconfig(node_rect, outline=glow_color, width=3)
+
+            if step < 100:
+                self.canvas.after(10, lambda: pulse(step + 10))
+            else:
+                self.canvas.itemconfig(node_rect, outline="white", width=2) 
+
+        pulse()
+
     def add_node(self, node_id=None, position=None):
         if len(self.nodes) >= self.max_nodes:
             return
@@ -166,7 +210,6 @@ class Playground(ctk.CTkFrame):
         self.show_states = not self.show_states
         for node_id, label in self.node_info_labels.items():
             if self.show_states:
-                # Restore the text with node details
                 node = self.nodes[node_id]
                 info_text = (f"State: {node.state}\n"
                             f"Mode: {node.mode}\n"
@@ -174,7 +217,6 @@ class Playground(ctk.CTkFrame):
                             f"REC: {node.receive_error_counter}")
                 self.canvas.itemconfig(label, text=info_text)
             else:
-                # Hide the text by setting it to an empty string
                 self.canvas.itemconfig(label, text="")
 
 class LogPanel(ctk.CTkFrame):
@@ -364,6 +406,8 @@ class InteractiveSimulation(ctk.CTkFrame):
         super().__init__(master)
         self.master = master
         self.playground = playground
+        self.nodes = []
+        self.bus = playground.bus 
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -392,9 +436,9 @@ class InteractiveSimulation(ctk.CTkFrame):
         interactive_menu = ctk.CTkFrame(left_column)
         interactive_menu.pack(fill="x", pady=10)
         ctk.CTkButton(interactive_menu, text="Edit Node Configuration", command=self.edit_node_config).pack(fill="x", pady=5)
-        ctk.CTkButton(interactive_menu, text="Send Custom Message", command=self.send_custom_message).pack(fill="x", pady=5)
+        ctk.CTkButton(interactive_menu, text="Send Custom Message", command=self.open_custom_message_window).pack(fill="x", pady=5)
         ctk.CTkButton(interactive_menu, text="Inject Errors", command=self.inject_errors).pack(fill="x", pady=5)
-        ctk.CTkButton(interactive_menu, text="Modify Network Load", command=self.modify_network_load).pack(fill="x", pady=5)
+        #ctk.CTkButton(interactive_menu, text="Modify Network Load", command=self.modify_network_load).pack(fill="x", pady=5)
 
         self.playground = Playground(self, master)
         self.playground.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
@@ -402,8 +446,25 @@ class InteractiveSimulation(ctk.CTkFrame):
         self.log_panel = LogPanel(self)
         self.log_panel.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
 
+        self.initialize_nodes()
+
     def add_node(self, node_id=None, position=None):
         node_id = node_id or self.next_node_id
+
+    def initialize_nodes(self):
+        for i in range(5): 
+            self.playground.add_node(node_id=i + 1)
+            node = CANNode(i + 1, self.playground.bus)
+            self.nodes.append(node)
+        self.log_panel.add_log("Initialized simulation with 5 nodes on the CAN bus.")
+
+    def broadcast_message(self):
+        sender_id = 1  
+        self.log_panel.add_log(f"Broadcasting message from Node {sender_id} to all nodes...")
+        for receiver_id in self.playground.nodes:
+            if receiver_id != sender_id: 
+                self.playground.animate_message(sender_id, receiver_id)
+                self.log_panel.add_log(f"Node {receiver_id} received the message.")
         
     def open_custom_message_window(self):
         if not self.nodes:
@@ -411,12 +472,13 @@ class InteractiveSimulation(ctk.CTkFrame):
             return
         window = ctk.CTkToplevel(self)
         window.title("Send Custom Message")
-        window.geomtry("500x400")
+        window.geometry("500x400")
 
         sender_label = ctk.CTkLabel(window, text="Sender Node:")
         sender_label.pack(pady=5)
-        sender_var = ctk.StringVar(value=list(self.nodes.keys())[0])
-        sender_menu = ctk.CTkOptionMenu(window, variable=sender_var, values=list(map(str, self.nodes.keys())))
+        for node in self.nodes:
+            sender_var = ctk.StringVar(value=list(node.node_id)[0])
+            sender_menu = ctk.CTkOptionMenu(window, variable=sender_var, values=list(map(str, node.node_id)))
         sender_menu.pack(pady=5)
 
         receiver_label = ctk.CTkLabel(window, text="Receivers (multi-select):")
@@ -428,7 +490,7 @@ class InteractiveSimulation(ctk.CTkFrame):
         error_label = ctk.CTkLabel(window, text="Inject Error (optional):")
         error_label.pack(pady=5)
         error_var = ctk.StringVar(value="None")
-        error_menu = ctk.CTkOptionMenu(window, variable=error_var, values=["None", "Bit Error", "CRC Error", "Frame Error"])
+        error_menu = ctk.CTkOptionMenu(window, variable=error_var, values=["None", "Bit Monitoring", "Bit Stuffing", "Acknowledgement Error", "CRC Error", "Frame Error"])
         error_menu.pack(pady=5)
 
         def send_message():
@@ -441,26 +503,26 @@ class InteractiveSimulation(ctk.CTkFrame):
         ctk.CTkButton(window, text="Send", command=send_message).pack(pady=10)
 
     def run_simulation(self):
-        self.log_panel.add_log("Running simulation...")
+        self.log_panel.add_log("Run button")
 
     def pause_simulation(self):
-        self.log_panel.add_log("Pausing simulation...")
+        self.log_panel.add_log("Pause button")
 
     def reset_simulation(self):
         self.playground.reset()
         self.log_panel.clear_log()
 
     def edit_node_config(self):
-        self.log_panel.add_log("Editing node configuration...")
+        self.log_panel.add_log("Editing node configuration button")
 
     def send_custom_message(self):
-        self.log_panel.add_log("Sending custom message...")
+        self.log_panel.add_log("Sending custom message button")
 
     def inject_errors(self):
-        self.log_panel.add_log("Injecting errors...")
+        self.log_panel.add_log("Injecting errors button")
 
     def modify_network_load(self):
-        self.log_panel.add_log("Modifying network load...")
+        self.log_panel.add_log("Modifying network load button")
 
 if __name__ == "__main__":
     app = CANSimulatorApp()

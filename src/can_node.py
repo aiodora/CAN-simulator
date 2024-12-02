@@ -97,17 +97,19 @@ class CANNode:
             print(f"Node {self.node_id} received message with ID {message.identifier}.")
 
         if self.error_handler.bit_stuffing_check(message.get_bitstream()) or message.error_type == "stuff_error":
-            #print(f"Node {self.node_id} detected a Bit Stuffing Error.")
+            print(f"Node {self.node_id} detected a Bit Stuffing Error.")
             self.bus.broadcast_error_frame("stuff_error")
-            return
+            return False
         elif self.error_handler.crc_check(message, message.calculate_crc()):
-            #print(f"Node {self.node_id} detected a CRC Error.")
+            print(f"Node {self.node_id} detected a CRC Error.")
             self.bus.broadcast_error_frame("crc_error")
-            return
+            return False
         elif self.error_handler.frame_check(message):
-            #print(f"Node {self.node_id} detected a Form Error.")
+            print(f"Node {self.node_id} detected a Form Error.")
             self.bus.broadcast_error_frame("form_error")
-            return
+            return False
+        
+        return True
         
     def detect_and_handle_error(self, message):
         if self.error_handler.detect_error(message.error_type, message):
@@ -140,7 +142,6 @@ class CANNode:
             self.current_bit_index = 0
             self.mode = TRANSMITTING
 
-
     def increment_transmit_error(self):
         self.transmit_error_counter += 8
         self.check_state_transition()
@@ -150,13 +151,23 @@ class CANNode:
         self.receive_error_counter += 1
         self.check_state_transition()
 
+    def decrement_transmit_error(self):
+        if self.transmit_error_counter > 0:
+            self.transmit_error_counter -= 1
+        self.check_state_transition()
+
+    def decrement_receive_error(self):
+        if self.receive_error_counter > 0:
+            self.receive_error_counter -= 1
+        self.check_state_transition()
+
     def check_state_transition(self):
         if self.transmit_error_counter >= 255 or self.receive_error_counter >= 255:
             self.state = BUS_OFF
-            print(f"Node {self.node_id} entered BUS_OFF state.")
+            print(f"Node {self.node_id} is in BUS_OFF state.")
         elif self.transmit_error_counter >= 127 or self.receive_error_counter >= 127:
             self.state = ERROR_PASSIVE
-            print(f"Node {self.node_id} entered ERROR_PASSIVE state.")
+            print(f"Node {self.node_id} is in ERROR_PASSIVE state.")
         else:
             self.state = ERROR_ACTIVE
 
