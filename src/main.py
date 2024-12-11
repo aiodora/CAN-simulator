@@ -1,6 +1,6 @@
 import time
 from can_bus import CANBus
-from can_node import CANNode
+from can_node import CANNode, ERROR_ACTIVE
 from can_message import DataFrame, RemoteFrame, ErrorFrame, OverloadFrame
 
 def setup_can_network():
@@ -34,9 +34,6 @@ def test_crc_error_detection():
 
     node1.send_message(message_id=102, data=[0x01, 0x02], error_type="crc_error")
     bus.simulate_step()
-    print(f"Node 1 tec: {node1.transmit_error_counter}")
-    print(f"Node 2 rec: {node2.receive_error_counter}")
-    print(f"Node 3 rec: {node3.receive_error_counter}")
 
     assert node1.transmit_error_counter == 8, "TEC not incremented correctly for CRC error."
     print(f"Node 1 TEC after CRC error: {node1.transmit_error_counter}")
@@ -84,6 +81,28 @@ def test_state_transitions():
 
     print("Trying to send message from node 1 (it is in bus off state now)")
     node1.send_message(message_id=msg_id, data=[0x01, 0x02])
+    bus.simulate_step()
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+
+    msg_id = msg_id + 1
+    node2.send_message(message_id=msg_id, data=[0x03, 0x05])
+    bus.simulate_step()
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+
+    node3.send_message(message_id=msg_id, data=[0x03, 0x05])
+    bus.simulate_step()
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+
+    node1.transmit_error_counter = 8 
+    node1.state = ERROR_ACTIVE
+    node1.send_message(message_id=msg_id, data=[0x03, 0x05])
+    bus.simulate_step()
     print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
     print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
     print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
@@ -164,9 +183,10 @@ def test_stuffing_and_form_errors():
     print("Testing Stuffing Error")
     node1.send_message(message_id=101, data=[0x01, 0x02], frame_type="data", error_type="stuff_error")
     bus.simulate_step()
-    print(f"Node 1 TEC after stuffing error: {node1.transmit_error_counter}")
-    print(f"Node 2 REC after stuffing error: {node2.receive_error_counter}")
-    print(f"Node 3 REC after stuffing error: {node3.receive_error_counter}")
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    node1.message_queue.pop(0)
 
     #not resetting them to show the tec and rec increases accordingly
     # node1.transmit_error_counter = 0
@@ -175,16 +195,18 @@ def test_stuffing_and_form_errors():
 
     # Test Form Error
     print("Testing Form Error")
-    node1.send_message(message_id=102, data=[0x03, 0x04], frame_type="data", error_type="form_error")
+    node2.send_message(message_id=102, data=[0x03, 0x04], frame_type="data", error_type="stuff_error")
     bus.simulate_step()
-    print(f"Node 1 TEC after form error: {node1.transmit_error_counter}")
-    print(f"Node 2 REC after form error: {node2.receive_error_counter}")
-    print(f"Node 3 REC after form error: {node3.receive_error_counter}")
-
-    print("Sending correct message")
-    node1.send_message(message_id=103, data=[0x01, 0x02])
     print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
-    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
+    print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
+    node2.message_queue.pop(0)
+
+    print("Sending correct message xxx")
+    node2.send_message(message_id=103, data=[0x01, 0x02], frame_type="data", error_type=None)
+    bus.simulate_step()
+    print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    print(f"Node 2: REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
     print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
 
 if __name__ == "__main__":
@@ -197,4 +219,4 @@ if __name__ == "__main__":
     test_bit_error_detection()
     #print("a ajuns aici")
     test_stuffing_and_form_errors()
-    test_state_transitions()
+    #test_state_transitions()

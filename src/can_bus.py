@@ -2,12 +2,17 @@ from can_node import CANNode, WAITING, TRANSMITTING, RECEIVING, BUS_OFF
 from can_message import DataFrame, ErrorFrame, OverloadFrame, RemoteFrame
 import random 
 
+IDLE = "Idle"
+BUSY = "Busy"
+
 class CANBus:
     def __init__(self):
         self.nodes = []  
         self.current_bit = 1 #by default the current bit that is sent is 1 
         self.in_arbitration = False  
         self.error = False
+        self.current_bitstream = [] 
+        self.state = IDLE 
 
     def connect_node(self, node):
         self.nodes.append(node)
@@ -19,30 +24,39 @@ class CANBus:
 
         if not nodes_with_messages:
             print("No nodes with pending messages.")
+            self.state = IDLE 
+            self.current_bitstream.append(1)
             return
 
         for node in nodes_with_messages:
             message, _ = node.message_queue[0]
             if isinstance(message, ErrorFrame):
                 print(f"Node {node.node_id} broadcasting an Error Frame.")
+                self.state = BUSY
                 self.broadcast_error_frame(message.error_type or "generic_error")
                 node.message_queue.pop(0) 
                 node.mode = WAITING
                 return
             elif isinstance(message, OverloadFrame):
                 print(f"Node {node.node_id} broadcasting an Overload Frame.")
+                self.state = BUSY
                 self.broadcast_overload_frame()
                 node.message_queue.pop(0) 
                 node.mode = WAITING
                 return
             
-        for node in nodes_with_messages: 
+        for node in self.nodes: 
             node.mode = RECEIVING
+
+        for node in nodes_with_messages:
+            node.mode = TRANSMITTING
 
         if len(nodes_with_messages) == 1: #only one node tries to transmit
             winner_node = nodes_with_messages[0]
+            self.state = BUSY
         else: #more nodes try to send at the same time
             self.in_arbitration = True
+            self.state = BUSY
             winner_node = self.perform_arbitration(nodes_with_messages)
             self.in_arbitration = False
 
@@ -53,8 +67,21 @@ class CANBus:
             node.mode = WAITING
 
     def perform_arbitration(self, nodes_with_messages):
-        nodes_with_messages.sort(key=lambda node: node.message_queue[0][0].identifier)
-        winner_node = nodes_with_messages[0]
+        #nodes_with_messages.sort(key=lambda node: node.message_queue[0][0].identifier)
+        #winner_node = nodes_with_messages[0]
+        contenders = nodes_with_messages
+        bit_pos = 0
+
+        while len(contenders) > 1:
+            current_bits = [node.message_queue[0][1][bit_pos] for node in contenders]
+            dominant_bit = min(current_bits)
+            self.current_bit = dominant_bit
+            self.current_bitstream.append(dominant_bit)
+            #print(f"Current bit: {dominant_bit}.")
+            contenders = [node for node, bit in zip(contenders, current_bits) if bit == dominant_bit]
+            bit_pos += 1
+        
+        winner_node = contenders[0] 
         print(f"Node {winner_node.node_id} won arbitration with ID {winner_node.message_queue[0][0].identifier}.")
         
         for node in nodes_with_messages:
@@ -69,7 +96,7 @@ class CANBus:
         if not winner_node.has_pending_message():
             return
 
-        message, bitstream = winner_node.message_queue.pop(0)
+        message, bitstream = winner_node.message_queue[0]
         print(f"Node {winner_node.node_id} is delivering message ID {message.identifier}.")
 
         ack_received = False
@@ -136,10 +163,16 @@ class CANBus:
                         node.decrement_transmit_error()
                     else:
                         node.decrement_receive_error()
+                winner_node.message_queue.pop(0)
 
         for node in self.nodes:
             node.mode = WAITING
+        
+        self.state = IDLE 
 
+    def get_current_bit(self):
+        return self.current_bit
+    
     def broadcast_error_frame(self, error_type):
         print(f"Broadcasting error frame for {error_type}.")
         eligible_receivers = [node for node in self.nodes if node.mode == RECEIVING and node.state != BUS_OFF]
@@ -155,10 +188,6 @@ class CANBus:
             if node.mode == TRANSMITTING:
                 print(f"Node {node.node_id} is the transmitter. Incrementing TEC for {error_type}.")
                 node.increment_transmit_error()
-
-
-    def get_current_bit(self):
-        return self.current_bit
 
     def broadcast_overload_frame(self):
         print("Broadcasting overload frame.")

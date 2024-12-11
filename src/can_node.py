@@ -39,13 +39,13 @@ class CANNode:
             return
 
         if frame_type == "data":
-            message = DataFrame(message_id, data)
+            message = DataFrame(message_id, self.node_id, data)
         elif frame_type == "remote":
-            message = RemoteFrame(message_id)
+            message = RemoteFrame(message_id, self.node_id)
         elif frame_type == "error":
-            message = ErrorFrame()
+            message = ErrorFrame(sent_by=self.node_id)
         elif frame_type == "overload":
-            message = OverloadFrame()
+            message = OverloadFrame(sent_by=self.node_id)
         else:
             print("Invalid frame type specified.")
             return
@@ -74,7 +74,7 @@ class CANNode:
 
             #bit monitoring
             if self.mode == TRANSMITTING and not self.bus.in_arbitration:
-                if transmitted_bit != observed_bit or message.error_type == "bit_error":
+                if transmitted_bit != observed_bit or (message.error_type == "bit_error" and self.bit_flipped[0] ):
                     print(f"Node {self.node_id} detected a Bit Monitoring Error.")
                     self.increment_transmit_error()
                     self.bus.broadcast_error_frame("bit_monitoring_error")
@@ -110,6 +110,13 @@ class CANNode:
             return False
         
         return True
+    
+    def detect_error_at_bit(self, bit_pos, transmitted_bit, message):
+        bitstream = message.get_bitstream()
+        
+        if self.mode == TRANSMITTING and not self.bus.in_arbitration:
+            if transmitted_bit != self.bus.get_current_bit():
+                print(f"Node {self.node_id} detected a Bit Monitoring Error.")
         
     def detect_and_handle_error(self, message):
         if self.error_handler.detect_error(message.error_type, message):

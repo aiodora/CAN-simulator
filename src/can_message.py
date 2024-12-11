@@ -1,7 +1,7 @@
 import random
 
 class CANMessage:
-    def __init__(self, identifier, data=None, frame_type="Data"):
+    def __init__(self, identifier, sent_by, data=None, frame_type="Data"):
         self.start_of_frame = 1 
         self.identifier = identifier
         self.frame_type = frame_type
@@ -17,6 +17,8 @@ class CANMessage:
         self.end_of_frame = [1] * 7
         self.intermission = [1] * 3
         self.error_type = None
+        self.sender_id = sent_by
+        self.bit_flipped = [None, None]
 
     def calculate_control_field(self, data):
         if data: data_length_code = min(len(data), 8)
@@ -104,8 +106,10 @@ class CANMessage:
         return bitstream
     
     def __repr__(self):
-        return (f"CANMessage(id={self.identifier}, data={self.data_field}, "
-                f"crc={self.crc}, frame_type={self.rtr})")
+        if(self.identifier != None):
+            return (f"CANMessage(type={self.frame_type}, id={self.identifier}, data={self.data_field}, crc={self.crc}, frame_type={self.rtr})")
+        else: 
+            return (f"CANMessage(type={self.frame_type}")
     
     #monitor error; to refine
     def corrupt_bit(self):
@@ -115,6 +119,7 @@ class CANMessage:
         
         if len(bitstream) > start_of_corruptible_bits:
             bit_to_flip = random.randint(start_of_corruptible_bits, len(bitstream) - 1)
+            self.bit_flipped = [bit_to_flip, bitstream[bit_to_flip]]
             bitstream[bit_to_flip] = not bitstream[bit_to_flip]
             print(f"Bit {bit_to_flip} corrupted (excluding identifier).")
             self.error_type = "bit_error"
@@ -148,16 +153,16 @@ class CANMessage:
         self.error_type = "form_error"
     
 class DataFrame(CANMessage):
-    def __init__(self, identifier, data):
-        super().__init__(identifier, data, frame_type="Data")
+    def __init__(self, identifier, sent_by, data):
+        super().__init__(identifier, sent_by, data, frame_type="Data")
 
 class RemoteFrame(CANMessage):
-    def __init__(self, identifier):
-        super().__init__(identifier, data=None, frame_type="Remote")
+    def __init__(self, identifier, sent_by):
+        super().__init__(identifier, sent_by, data=None, frame_type="Remote")
 
 class ErrorFrame(CANMessage):
-    def __init__(self):
-        super().__init__(identifier=None, data=None, frame_type="Error")
+    def __init__(self, sent_by):
+        super().__init__(sent_by=sent_by, identifier=None, data=None, frame_type="Error")
         self.error_flag = [0] * 6 + [1]
         self.error_delimiter = [1] * 8
 
@@ -168,8 +173,8 @@ class ErrorFrame(CANMessage):
         return "ErrorFrame(error_flag={}, error_delimiter={})".format(self.error_flag, self.error_delimiter)
 
 class OverloadFrame(CANMessage):
-    def __init__(self):
-        super().__init__(identifier=None, data=None, frame_type="Overload")
+    def __init__(self, sent_by):
+        super().__init__(sent_by=sent_by, identifier=None, data=None, frame_type="Overload")
         self.overload_flag = [0] * 6
         self.overload_delimiter = [1] * 8 
 

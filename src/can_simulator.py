@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from can_bus import CANBus
 from can_node import CANNode
+from can_message import CANMessage, DataFrame, RemoteFrame, ErrorFrame, OverloadFrame
 import time
 
 ctk.set_appearance_mode("dark")
@@ -43,6 +44,9 @@ class Playground(ctk.CTkFrame):
         self.next_node_id = 1
         self.max_nodes = 50
         self.show_states = True
+        self.clock_running = False
+        self.clock_label = None
+        self.clock = 0
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -52,6 +56,7 @@ class Playground(ctk.CTkFrame):
 
         self.bus_line = self.canvas.create_line(50, 580, 2050, 580, fill="lightgrey", width=5)
         self.canvas.create_text(80, 560, text="CAN Bus", fill="white", font=('Arial', 14, 'bold'))
+        self.clock_label = self.canvas.create_text(100, 50, text = f"Clock = {self.clock}", fill="white", font=("Arial", 20, "bold"), tag="clock")
 
     def animate_message(self, sender_id, receiver_id):
             if sender_id not in self.node_positions or receiver_id not in self.node_positions:
@@ -205,7 +210,6 @@ class Playground(ctk.CTkFrame):
         color = "yellow" if active else "lightgrey"
         self.canvas.itemconfig(self.bus_line, fill=color)
 
-
     def toggle_state_display(self):
         self.show_states = not self.show_states
         for node_id, label in self.node_info_labels.items():
@@ -218,6 +222,22 @@ class Playground(ctk.CTkFrame):
                 self.canvas.itemconfig(label, text=info_text)
             else:
                 self.canvas.itemconfig(label, text="")
+
+    def start_clock(self):
+        if not self.clock_running: 
+            self.clock_running = True
+            self.update_clock()
+
+    def update_clock(self):
+        if self.clock_running:
+            self.clock += 1
+            self.display_clock()
+            self.after(1000, self.update_clock) 
+
+    def reset_clock(self):
+        self.clock_running = False 
+        self.clock = 0 
+        self.display_clock() 
 
 class LogPanel(ctk.CTkFrame):
     def __init__(self, parent):
@@ -356,6 +376,8 @@ class PredefinedScenarios(ctk.CTkFrame):
         self.node_failure_btn.configure(state="disabled" if active_scenario != "node_failure" else "normal")
 
     def run_scenario(self):
+        self.playground.clock_running = True
+        self.playground.start_clock()
         if self.active_scenario == "frame":
             self.log_panel.add_log(f"Running message transmission ({self.frame_dropdown.get()})...")
             #logic
@@ -395,6 +417,8 @@ class PredefinedScenarios(ctk.CTkFrame):
         self.playground.reset()
         self.log_panel.clear_log()
         self.active_scenario = None
+        self.playground.reset_clock()
+        self.playground.clock_running = False
 
     def initialize_predefined_scenarios(self):
         self.playground.reset()
@@ -503,6 +527,8 @@ class InteractiveSimulation(ctk.CTkFrame):
         ctk.CTkButton(window, text="Send", command=send_message).pack(pady=10)
 
     def run_simulation(self):
+        self.playground.clock_running = True
+        self.playground.start_clock()
         self.log_panel.add_log("Run button")
 
     def pause_simulation(self):
@@ -511,6 +537,8 @@ class InteractiveSimulation(ctk.CTkFrame):
     def reset_simulation(self):
         self.playground.reset()
         self.log_panel.clear_log()
+        self.playground.reset_clock()
+        self.playground.clock_running = False
 
     def edit_node_config(self):
         self.log_panel.add_log("Editing node configuration button")
