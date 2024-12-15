@@ -124,7 +124,9 @@ class CANNode:
         
     def detect_and_handle_error(self, message):
         if self.error_handler.detect_error(message.error_type, message):
-            self.increment_receive_error()
+            #print("here")
+            #self.increment_receive_error()
+            self.bus.broadcast_error_frame(message.error_type)
             return True
         return False
 
@@ -146,10 +148,11 @@ class CANNode:
     def retransmit_message(self):
         if self.state == BUS_OFF:
             print(f"Node {self.node_id} is in BUS_OFF state and cannot retransmit.")
+            self.message_queue.clear()
             return
 
         if self.has_pending_message():
-            print(f"Node {self.node_id} retransmitting message ID {self.message_queue[0][0].identifier}.")
+            #print(f"Node {self.node_id} retransmitting message ID {self.message_queue[0][0].identifier}.")
             self.current_bit_index = 0
             self.mode = TRANSMITTING
 

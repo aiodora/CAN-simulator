@@ -109,7 +109,7 @@ class CANMessage:
     
     def __repr__(self):
         if(self.identifier != None):
-            return (f"CANMessage(type={self.frame_type}, id={self.identifier}, data={self.data_field}, crc={self.crc}, frame_type={self.rtr})")
+            return (f"CANMessage(type={self.frame_type}, id={self.identifier}, data={self.data_field}, crc={self.crc}, frame_type={self.rtr}), ack_slot={self.ack_slot}")
         else: 
             return (f"CANMessage(type={self.frame_type}")
     
@@ -177,7 +177,7 @@ class RemoteFrame(CANMessage):
 class ErrorFrame(CANMessage):
     def __init__(self, sent_by):
         super().__init__(sent_by=sent_by, identifier=None, data=None, frame_type="Error")
-        self.error_flag = [0] * 6 + [1]
+        self.error_flag = [0] * 6 
         self.error_delimiter = [1] * 8
 
     def get_bitstream(self):

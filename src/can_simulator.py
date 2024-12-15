@@ -335,13 +335,27 @@ class Playground(ctk.CTkFrame):
 class LogPanel(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent)
-        self.log_text = ctk.CTkTextbox(self, state="disabled", height=100)
-        self.log_text.pack(expand=True, fill="both", padx=10, pady=10)
+        self.log_frame = ctk.CTkFrame(self)
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.log_text = ctk.CTkTextbox(self.log_frame, state="disabled", wrap="none", height=200)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+
+        self.scroll_y = ctk.CTkScrollbar(self.log_frame, command=self.log_text.yview)
+        self.scroll_y.grid(row=0, column=1, sticky="ns")
+
+        self.log_text.configure(yscrollcommand=self.scroll_y.set)
+        self.log_frame.grid_rowconfigure(0, weight=1)
+        self.log_frame.grid_columnconfigure(0, weight=1)
+
+        self.current_bits_line = ""
+        self.message_type_line = ""
 
     def add_log(self, message):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{message}\n")
         self.log_text.configure(state="disabled")
+        self.log_text.see("end")
 
     def clear_log(self):
         self.log_text.configure(state="normal")

@@ -14,6 +14,7 @@ class CANBus:
         self.error = False
         self.current_bitstream = [] 
         self.state = IDLE 
+        self.error_reported = False
 
     def connect_node(self, node):
         self.nodes.append(node)
@@ -102,71 +103,28 @@ class CANBus:
         #print(bitstream)
         print(repr(message))
 
-        ack_received = False
-        error_detected = False
-        if message.error_type is None:
-            self.error = False
-        else:
-            self.error = True
+        self.error_reported = False 
 
         for node in self.nodes:
             if node == winner_node:
                 continue
-            error_detected = node.detect_and_handle_error(message) or error_detected
+            if not self.error_reported and node.detect_and_handle_error(message):
+                self.error_reported = True  # Only the first node reports the error
+                self.broadcast_error_frame(message.error_type)
+                break  # Stop further error detection
 
-        if error_detected and message.error_type != "ack_error":
-            winner_node.increment_transmit_error()
-        else:
+        if not self.error_reported:
             for node in self.nodes:
                 if node != winner_node and node.state != BUS_OFF:
                     node.receive_message(message)
 
-        if isinstance(message, RemoteFrame):
-            producers = [node for node in self.nodes if message.identifier in node.produced_ids]
-            responder = random.choice(producers) if producers else None
-
             for node in self.nodes:
-                if node != winner_node and node.state != BUS_OFF:
-                    node.receive_message(message)
+                if node.mode == RECEIVING and node.state != BUS_OFF:
+                    node.decrement_receive_error()
+                elif node.mode == TRANSMITTING:
+                    node.decrement_transmit_error()
 
-                    if message.identifier in node.produced_ids:
-                        ack_received = True
-                        if node == responder:
-                            print(f"Node {node.node_id} responding to Remote Frame with ID {message.identifier}.")
-                            response_data = [random.randint(0, 255) for _ in range(8)]
-                            node.send_message(message.identifier, response_data, frame_type="data")
-                    else:
-                        ack_received = True 
-
-            if not producers:
-                print(f"No nodes available to respond to Remote Frame with ID {message.identifier}.")
-
-        else:
-            for node in self.nodes:
-                if node != winner_node and node.state != BUS_OFF:
-                    # if node.receive_message(message): 
-                    #     continue
-                    # else: 
-                    #     break
-
-                    if message.error_type == "ack_error":
-                        ack_received = False
-                    else:
-                        ack_received = True
-
-            if not ack_received:
-                print(f"Node {winner_node.node_id} detected an ACK Error.")
-                winner_node.increment_transmit_error()
-                self.broadcast_error_frame("ack_error")
-                winner_node.retransmit_message()
-
-            if self.error == False:
-                for node in self.nodes: 
-                    if node == winner_node:
-                        node.decrement_transmit_error()
-                    else:
-                        node.decrement_receive_error()
-                winner_node.message_queue.pop(0)
+            winner_node.message_queue.pop(0)
 
         for node in self.nodes:
             node.mode = WAITING
@@ -177,22 +135,27 @@ class CANBus:
         return self.current_bit
     
     def broadcast_error_frame(self, error_type):
-        print(f"Broadcasting error frame for {error_type}.")
         eligible_receivers = [node for node in self.nodes if node.mode == RECEIVING and node.state != BUS_OFF]
         
         if eligible_receivers:
             reporter_node = random.choice(eligible_receivers)
             print(f"Node {reporter_node.node_id} detected the {error_type} error and is reporting it.")
-            reporter_node.increment_receive_error()
+            print(f"Broadcasting error frame for {error_type}.")
+            #reporter_node.increment_receive_error()
         # else:
         #     print("No eligible receivers to report the error.")
 
         for node in self.nodes:
+            if node.mode == RECEIVING and node.state != BUS_OFF:
+                node.increment_receive_error()
+
+        for node in self.nodes:
             if node.mode == TRANSMITTING:
-                print(f"Node {node.node_id} is the transmitter. Incrementing TEC for {error_type}.")
+                #print(f"Node {node.node_id} is the transmitter. Incrementing TEC for {error_type}.")
                 node.increment_transmit_error()
 
         self.reset_nodes_after_error()
+        self.transmit_frame_bit(ErrorFrame(sent_by=None))
 
     def reset_nodes_after_error(self):
         for node in self.nodes:
@@ -225,9 +188,10 @@ class CANBus:
         for bit in bitstream:
             self.current_bit = bit
             self.current_bitstream.append(bit)
-            print(f"Transmitting bit: {bit} from standalone frame.")
+            #print(f"Transmitting bit: {bit}")
 
             for node in self.nodes:
                 node.process_received_bit(bit)
 
             time.sleep(0.1)
+        print(f"End of {frame}.")
