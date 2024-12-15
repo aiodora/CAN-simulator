@@ -74,7 +74,7 @@ class CANNode:
 
             #bit monitoring
             if self.mode == TRANSMITTING and not self.bus.in_arbitration:
-                if transmitted_bit != observed_bit or (message.error_type == "bit_error" and self.bit_flipped[0] ):
+                if message.error_type == "bit_error" and self.bit_flipped[0]:
                     print(f"Node {self.node_id} detected a Bit Monitoring Error.")
                     self.increment_transmit_error()
                     self.bus.broadcast_error_frame("bit_monitoring_error")
@@ -92,22 +92,26 @@ class CANNode:
     def receive_message(self, message):
         if message.identifier not in self.filters:
             print(f"Node {self.node_id} ignored message with ID {message.identifier}.")
-            #return
+            #return; doesnt process the message but still can send ack bit
         else:
             print(f"Node {self.node_id} received message with ID {message.identifier}.")
 
-        if self.error_handler.bit_stuffing_check(message.get_bitstream()) or message.error_type == "stuff_error":
+        if message.error_type == "stuff_error":
             print(f"Node {self.node_id} detected a Bit Stuffing Error.")
             self.bus.broadcast_error_frame("stuff_error")
             return False
-        elif self.error_handler.crc_check(message, message.calculate_crc()):
+        elif message.error_type == "crc_error":
             print(f"Node {self.node_id} detected a CRC Error.")
             self.bus.broadcast_error_frame("crc_error")
             return False
-        elif self.error_handler.frame_check(message):
+        elif message.error_type == "form_error":
             print(f"Node {self.node_id} detected a Form Error.")
             self.bus.broadcast_error_frame("form_error")
             return False
+        elif message.error_type == "ack_error":
+            return False
+        
+        message.ack_slot = 0
         
         return True
     
@@ -182,13 +186,21 @@ class CANNode:
         return len(self.message_queue) > 0
 
     def reset_node(self):
-        if self.state == BUS_OFF:
+        # if self.state == BUS_OFF:
             self.transmit_error_counter = 0
             self.receive_error_counter = 0
             self.state = ERROR_ACTIVE
             self.mode = WAITING
-            print(f"Node {self.node_id} reset to ERROR_ACTIVE state.")
+            #print(f"Node {self.node_id} reset to ERROR_ACTIVE state.")
 
     def stop_transmitting(self):
         self.mode = WAITING
         self.current_bit_index = 0
+
+    def process_received_bit(self, bit):
+        if self.mode == RECEIVING:
+            print(f"Node {self.node_id} received bit: {bit}")
+            if bit != self.bus.get_current_bit():
+                print(f"Node {self.node_id} detected a bit error.")
+                return True 
+        return False

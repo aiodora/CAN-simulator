@@ -1,6 +1,7 @@
 from can_node import CANNode, WAITING, TRANSMITTING, RECEIVING, BUS_OFF 
 from can_message import DataFrame, ErrorFrame, OverloadFrame, RemoteFrame
 import random 
+import time
 
 IDLE = "Idle"
 BUSY = "Busy"
@@ -98,6 +99,8 @@ class CANBus:
 
         message, bitstream = winner_node.message_queue[0]
         print(f"Node {winner_node.node_id} is delivering message ID {message.identifier}.")
+        #print(bitstream)
+        print(repr(message))
 
         ack_received = False
         error_detected = False
@@ -189,8 +192,42 @@ class CANBus:
                 print(f"Node {node.node_id} is the transmitter. Incrementing TEC for {error_type}.")
                 node.increment_transmit_error()
 
+        self.reset_nodes_after_error()
+
+    def reset_nodes_after_error(self):
+        for node in self.nodes:
+            node.mode = WAITING
+        self.state = IDLE
+
     def broadcast_overload_frame(self):
         print("Broadcasting overload frame.")
+        overload_frame = OverloadFrame(sent_by=None)
+        self.transmit_frame_bit(overload_frame)
         for node in self.nodes:
             node.handle_overload_frame()
         print("Overload frame processing complete.")
+
+    def transmit_bit_bit(self, winner_node=None):
+        message, bitstream = winner_node.message_queue[0] 
+        for bit in bitstream:
+            self.current_bit = bit
+            self.current_bitstream.append(bit)
+            print(f"Node {winner_node.node_id} transmitting bit {bit}.")
+            for node in self.nodes:
+                if node != winner_node:
+                    node.process_received_bit(bitstream.index(bit), bit, message)
+            time.sleep(0.1)
+
+        winner_node.message_queue.pop(0)
+
+    def transmit_frame_bit(self, frame):
+        bitstream = frame.get_bitstream()
+        for bit in bitstream:
+            self.current_bit = bit
+            self.current_bitstream.append(bit)
+            print(f"Transmitting bit: {bit} from standalone frame.")
+
+            for node in self.nodes:
+                node.process_received_bit(bit)
+
+            time.sleep(0.1)

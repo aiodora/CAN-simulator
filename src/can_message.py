@@ -2,11 +2,11 @@ import random
 
 class CANMessage:
     def __init__(self, identifier, sent_by, data=None, frame_type="Data"):
-        self.start_of_frame = 1 
+        self.start_of_frame = [1] 
         self.identifier = identifier
         self.frame_type = frame_type
-        if frame_type == "Data": self.rtr = 0
-        else: self.rtr = 1
+        if frame_type == "Data": self.rtr = [0]
+        else: self.rtr = [1]
         self.control_field = self.calculate_control_field(data)
         if data: self.data_field = data #at most 8 bytes
         else: self.data_field = []
@@ -19,6 +19,7 @@ class CANMessage:
         self.error_type = None
         self.sender_id = sent_by
         self.bit_flipped = [None, None]
+        self.error_bit_index = None 
 
     def calculate_control_field(self, data):
         if data: data_length_code = min(len(data), 8)
@@ -42,7 +43,7 @@ class CANMessage:
         bitstream = (
             [self.start_of_frame] +
             [int(b) for b in f"{self.identifier:011b}"] + 
-            [self.rtr] +
+            self.rtr +
             [int(b) for b in self.control_field]
         )
 
@@ -66,7 +67,7 @@ class CANMessage:
             else:
                 consecutive_bits = 1
             stuffed_bits.append(last_bit)
-            if consecutive_bits == 5:
+            if consecutive_bits == 6:
                 stuffed_bits.append(1 - last_bit) 
                 consecutive_bits = 1
             last_bit = bit
@@ -101,7 +102,8 @@ class CANMessage:
         bitstream.append(self.end_of_frame)
         bitstream.append(self.intermission)
 
-        bitstream = self.apply_bit_stuffing(bitstream)
+        if self.error_type != "stuff_error":
+            bitstream = self.apply_bit_stuffing(bitstream)
 
         return bitstream
     
@@ -121,6 +123,7 @@ class CANMessage:
             bit_to_flip = random.randint(start_of_corruptible_bits, len(bitstream) - 1)
             self.bit_flipped = [bit_to_flip, bitstream[bit_to_flip]]
             bitstream[bit_to_flip] = not bitstream[bit_to_flip]
+            self.error_bit_index = bit_to_flip 
             print(f"Bit {bit_to_flip} corrupted (excluding identifier).")
             self.error_type = "bit_error"
 
@@ -131,25 +134,36 @@ class CANMessage:
         start_of_corruptible_bits = identifier_length + 2
 
         if len(bitstream) > start_of_corruptible_bits + 5:
-            insert_index = random.randint(start_of_corruptible_bits, len(bitstream) - 5)
-            bit_to_duplicate = bitstream[insert_index]
-            bitstream.insert(insert_index + 5, bit_to_duplicate)
-            print(f"Bit stuffing error injected at index {insert_index + 5} (excluding identifier).")
-            self.error_type = "stuff_error"
+            for i in range(start_of_corruptible_bits, len(bitstream) - 6):
+                if len(set(bitstream[i:i + 5])) == 1:
+                    stuffing_bit = bitstream[i] 
+                    bitstream.insert(i + 5, stuffing_bit)  
+                    self.error_bit_index = i + 5  
+                    print(f"Bit stuffing error injected at index {i + 5} (excluding identifier).")
+                    self.error_type = "stuff_error"
+                    return 
+            
+            print("No valid position for bit stuffing error found.")
+        else:
+            print("Bitstream too short for bit stuffing error.")
 
     #crc error
     def corrupt_crc(self):
+        print(f"CRC before: {self.crc}")
         self.crc ^= 0x1  
+        print(f"CRC after: {self.crc}")
         self.error_type = "crc_error"
 
     #ack error
     def corrupt_ack(self): 
         self.ack_slot = 1
+        self.error_bit_index = self.ack_slot
         self.error_type = "ack_error"
 
     #form error
     def corrupt_form(self): 
         self.end_of_frame = [0] * 7  
+        self.error_bit_index = len(self.get_bitstream()) - 10
         self.error_type = "form_error"
     
 class DataFrame(CANMessage):
@@ -175,12 +189,12 @@ class ErrorFrame(CANMessage):
 class OverloadFrame(CANMessage):
     def __init__(self, sent_by):
         super().__init__(sent_by=sent_by, identifier=None, data=None, frame_type="Overload")
-        self.overload_flag = [0] * 6
+        self.overload_flag = [0] * 6  
         self.overload_delimiter = [1] * 8 
 
-    def get_bistream(self):
+    def get_bitstream(self):
         return self.overload_flag + self.overload_delimiter
 
     def __repr__(self):
-        return "OverloadFrame(overload_flag={}, overload_delimiter={})".format(self.overload_flag, self.overload_delimiter)
-        
+        return f"OverloadFrame(overload_flag={self.overload_flag}, overload_delimiter={self.overload_delimiter})"
+ 

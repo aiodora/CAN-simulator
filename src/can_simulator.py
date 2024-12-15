@@ -1,11 +1,17 @@
 import customtkinter as ctk
+from tkinter import HORIZONTAL
 from can_bus import CANBus
 from can_node import CANNode
 from can_message import CANMessage, DataFrame, RemoteFrame, ErrorFrame, OverloadFrame
 import time
+import random
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
+
+LOW = "low"
+MEDIUM = "medium"
+HIGH = "high"
 
 class CANSimulatorApp(ctk.CTk):
     def __init__(self):
@@ -17,6 +23,7 @@ class CANSimulatorApp(ctk.CTk):
         self.predefined_scenarios = PredefinedScenarios(self, self.playground)
         self.interactive_simulation = InteractiveSimulation(self, self.playground)
 
+        self.message_queue = [] 
         self.show_predefined_scenarios()
 
     def show_predefined_scenarios(self):
@@ -31,12 +38,21 @@ class CANSimulatorApp(ctk.CTk):
         for widget in self.winfo_children():
             widget.pack_forget()
 
+    def add_to_message_queue(self, message):
+        self.message_queue.append(message)
+
+    def remove_from_message_queue(self, message):
+        self.message_queue.remove(message)
+
+    def get_message_queue(self):
+        return self.message_queue
 
 class Playground(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
         self.bus = CANBus()
+        self.components = {}
         self.nodes = {}
         self.node_positions = {}
         self.node_visuals = {}
@@ -47,6 +63,7 @@ class Playground(ctk.CTkFrame):
         self.clock_running = False
         self.clock_label = None
         self.clock = 0
+        self.total_id_ranges = 2048
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -54,7 +71,12 @@ class Playground(ctk.CTkFrame):
         self.canvas = ctk.CTkCanvas(self, bg="black", scrollregion=(0, 0, 2000, 1000))
         self.canvas.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        self.bus_line = self.canvas.create_line(50, 580, 2050, 580, fill="lightgrey", width=5)
+        self.scroll_x = ctk.CTkScrollbar(self, orientation=HORIZONTAL, command=self.canvas.xview)
+        self.scroll_x.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10)) 
+
+        self.canvas.configure(xscrollcommand=self.scroll_x.set)
+
+        self.bus_line = self.canvas.create_line(50, 580, 2000, 580, fill="lightgrey", width=5)
         self.canvas.create_text(80, 560, text="CAN Bus", fill="white", font=('Arial', 14, 'bold'))
         self.clock_label = self.canvas.create_text(100, 50, text = f"Clock = {self.clock}", fill="white", font=("Arial", 20, "bold"), tag="clock")
 
@@ -102,7 +124,7 @@ class Playground(ctk.CTkFrame):
 
         pulse()
 
-    def add_node(self, node_id=None, position=None):
+    def add_node(self, node_id=None, position=None, component_name=None):
         if len(self.nodes) >= self.max_nodes:
             return
 
@@ -120,7 +142,78 @@ class Playground(ctk.CTkFrame):
         self.nodes[node_id] = node
         self.node_positions[node_id] = position
         self.next_node_id += 1
+
+        if component_name:
+            self.assign_node_to_component(node_id, component_name)
+        else:
+            node.produced_ids = None
+            node.filters = None
+
         self.draw_nodes()
+        self.adjust_canvas_and_bus()
+
+    def adjust_canvas_and_bus(self):
+        if self.node_positions:
+            max_x_position = max(pos[0] for pos in self.node_positions.values()) + 200
+        else:
+            max_x_position = 2050 
+
+        self.canvas.configure(scrollregion=(0, 0, max_x_position, 1000))
+
+        self.canvas.coords(self.bus_line, 50, 580, max_x_position, 580)
+
+    def recalculate_id_ranges(self):
+        if not self.components:
+            return
+        
+        num_components = len(self.components)
+        id_ranges = self.total_id_ranges // num_components
+
+        start = 0 
+        for comp in self.components:
+            end = start + id_ranges - 1 
+            self.components[comp] = (start, end)
+
+            for node_id in self.components[comp]:
+                if node_id in self.nodes:
+                    node = self.nodes[node_id]
+                    node.produced_ids = list(range(start, end + 1))
+                    node.filters = node.produces_ids
+            start = end + 1
+
+    def add_component(self, component_name):
+        if component_name in self.components:
+            return
+
+        self.components[component_name] = []
+        self.recalculate_id_ranges()
+
+    def remove_component(self, component_name):
+        if component_name not in self.components:
+            return
+
+        for node_id in self.components[component_name]:
+            if node_id in self.nodes:
+                node = self.nodes[node_id]
+                node.produced_ids = list(range(0, 2048))
+                node.filters = node.produced_ids
+
+        self.components.pop(component_name)
+        self.recalculate_id_ranges() 
+
+    def assign_node_to_component(self, node_id, component_name):
+        if component_name not in self.components or node_id not in self.nodes:
+            return
+        
+        if node_id not in self.nodes:
+            return
+        
+        for nodes in self.components.values():
+            if node_id in nodes:
+                nodes.remove(node_id)
+
+        self.components[component_name].append(node_id)
+        self.recalculate_id_ranges()
 
     def reset(self):
         self.nodes.clear()
@@ -432,6 +525,8 @@ class InteractiveSimulation(ctk.CTkFrame):
         self.playground = playground
         self.nodes = []
         self.bus = playground.bus 
+        self.message_load = MEDIUM 
+        self.messages_sent = 0
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -462,7 +557,16 @@ class InteractiveSimulation(ctk.CTkFrame):
         ctk.CTkButton(interactive_menu, text="Edit Node Configuration", command=self.edit_node_config).pack(fill="x", pady=5)
         ctk.CTkButton(interactive_menu, text="Send Custom Message", command=self.open_custom_message_window).pack(fill="x", pady=5)
         ctk.CTkButton(interactive_menu, text="Inject Errors", command=self.inject_errors).pack(fill="x", pady=5)
-        #ctk.CTkButton(interactive_menu, text="Modify Network Load", command=self.modify_network_load).pack(fill="x", pady=5)
+        load_menu = ctk.CTkFrame(left_column)
+        load_menu.pack(fill="x", pady=10)
+        ctk.CTkLabel(load_menu, text="Message Load:").pack(anchor="w")
+        self.load_dropdown = ctk.CTkOptionMenu(
+            load_menu,
+            values=["Low", "Medium", "High"],
+            command=self.set_message_load
+        )
+        self.load_dropdown.set("Medium")
+        self.load_dropdown.pack(fill="x", pady=5)
 
         self.playground = Playground(self, master)
         self.playground.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
@@ -526,13 +630,34 @@ class InteractiveSimulation(ctk.CTkFrame):
 
         ctk.CTkButton(window, text="Send", command=send_message).pack(pady=10)
 
-    def run_simulation(self):
-        self.playground.clock_running = True
-        self.playground.start_clock()
-        self.log_panel.add_log("Run button")
+    def set_message_load(self, load_level):
+        """Set the message load based on dropdown selection."""
+        self.message_load = load_level
+        self.log_panel.add_log(f"Message load set to {load_level}.")
 
-    def pause_simulation(self):
-        self.log_panel.add_log("Pause button")
+    def run_simulation(self):
+        """Run the simulation based on the selected message load."""
+        num_nodes = len(self.playground.nodes)
+        if self.message_load == "Low":
+            max_messages = num_nodes
+        elif self.message_load == "Medium":
+            max_messages = num_nodes * 2
+        elif self.message_load == "High":
+            max_messages = num_nodes * 4
+        else:
+            max_messages = num_nodes
+
+        for i in range(max_messages):
+            sender = random.choice(list(self.playground.nodes.keys()))
+            receivers = [n for n in self.playground.nodes if n != sender]
+            receiver = random.choice(receivers) if receivers else None
+
+            if receiver:
+                message = f"Message from Node {sender} to Node {receiver}"
+                self.master.add_to_message_queue(message)
+                self.log_panel.add_log(f"Added: {message}")
+
+        self.log_panel.add_log("Simulation started.")
 
     def reset_simulation(self):
         self.playground.reset()
@@ -540,8 +665,103 @@ class InteractiveSimulation(ctk.CTkFrame):
         self.playground.reset_clock()
         self.playground.clock_running = False
 
+    def pause_simulation(self):
+        self.log_panel.add_log("Pause button")
+
     def edit_node_config(self):
-        self.log_panel.add_log("Editing node configuration button")
+        window = ctk.CTkToplevel(self)
+        window.title("Edit Configuration")
+        window.geometry("600x500")
+
+        components = [f"Component {i + 1}" for i in range(len(self.playground.components))]
+        components.append("Add New Component") 
+
+        ctk.CTkLabel(window, text="Select Node:").pack(pady=5)
+        node_var = ctk.StringVar(value="Select a Node")
+        node_dropdown = ctk.CTkOptionMenu(
+            window, variable=node_var,
+            values=[f"Node {node_id}" for node_id in self.playground.nodes.keys()],
+            command=lambda _: update_node_properties(node_var.get())
+        )
+        node_dropdown.pack(pady=5)
+
+        # Node Properties
+        ctk.CTkLabel(window, text="Component:").pack(pady=5)
+        component_var = ctk.StringVar(value="Select Component")
+        component_dropdown = ctk.CTkOptionMenu(
+            window, variable=component_var,
+            values=components,
+            command=lambda _: handle_component_selection(component_var.get())
+        )
+        component_dropdown.pack(pady=5)
+
+        filter_label = ctk.CTkLabel(window, text="Filters (comma-separated):")
+        filter_label.pack(pady=5)
+        filter_entry = ctk.CTkEntry(window)
+        filter_entry.pack(pady=5)
+
+        def update_node_properties(node_selection):
+            """Update fields with the selected node's properties."""
+            node_id = int(node_selection.split()[1])
+            node = self.playground.nodes[node_id]
+            component_name = next(
+                (name for name, node_ids in self.playground.components.items() if node_id in node_ids),
+                "Select Component"
+            )
+            component_var.set(component_name)
+            filter_entry.delete(0, "end")
+            filter_entry.insert(0, ",".join(map(str, node.filters)))
+
+        def handle_component_selection(selection):
+            """Handle adding a new component or selecting an existing one."""
+            if selection == "Add New Component":
+                new_component_name = f"Component {len(self.playground.components) + 1}"
+                self.playground.add_component(new_component_name)
+                component_dropdown.configure(values=components + [new_component_name])
+                component_var.set(new_component_name)
+
+        def save_changes():
+            """Save the changes made to the selected node."""
+            node_id = int(node_var.get().split()[1])
+            if node_id not in self.playground.nodes:
+                print("Invalid node selected.")
+                return
+
+            # Update filters
+            filters = list(map(int, filter_entry.get().split(",")))
+            self.playground.nodes[node_id].filters = filters
+
+            # Assign node to the selected component
+            component_name = component_var.get()
+            if component_name != "Select Component":
+                self.playground.assign_node_to_component(node_id, component_name)
+
+            print(f"Node {node_id} updated: Filters={filters}, Component={component_name}")
+
+        def delete_node():
+            """Delete the selected node."""
+            node_id = int(node_var.get().split()[1])
+            if node_id in self.playground.nodes:
+                del self.playground.nodes[node_id]
+                for node_ids in self.playground.components.values():
+                    if node_id in node_ids:
+                        node_ids.remove(node_id)
+                node_dropdown.configure(
+                    values=[f"Node {node_id}" for node_id in self.playground.nodes.keys()]
+                )
+                print(f"Node {node_id} deleted.")
+
+        def add_new_node():
+            """Add a new node to the playground."""
+            self.playground.add_node()
+            node_dropdown.configure(
+                values=[f"Node {node_id}" for node_id in self.playground.nodes.keys()]
+            )
+
+        # Buttons
+        ctk.CTkButton(window, text="Save Changes", command=save_changes).pack(pady=10)
+        ctk.CTkButton(window, text="Delete Node", command=delete_node).pack(pady=10)
+        ctk.CTkButton(window, text="Add New Node", command=add_new_node).pack(pady=10)
 
     def send_custom_message(self):
         self.log_panel.add_log("Sending custom message button")

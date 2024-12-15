@@ -32,7 +32,7 @@ def test_bit_error_detection():
 def test_crc_error_detection():
     bus, node1, node2, node3 = setup_can_network()
 
-    node1.send_message(message_id=102, data=[0x01, 0x02], error_type="crc_error")
+    node1.send_message(message_id=102, data=[0x01, 0x02, 0x03], error_type="crc_error")
     bus.simulate_step()
 
     assert node1.transmit_error_counter == 8, "TEC not incremented correctly for CRC error."
@@ -181,7 +181,7 @@ def test_stuffing_and_form_errors():
     bus.connect_node(node3)
 
     print("Testing Stuffing Error")
-    node1.send_message(message_id=101, data=[0x01, 0x02], frame_type="data", error_type="stuff_error")
+    node1.send_message(message_id=101, data=[0x00, 0x02], frame_type="data", error_type="stuff_error")
     bus.simulate_step()
     print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
     print(f"Node 2: REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
@@ -195,7 +195,7 @@ def test_stuffing_and_form_errors():
 
     # Test Form Error
     print("Testing Form Error")
-    node2.send_message(message_id=102, data=[0x03, 0x04], frame_type="data", error_type="stuff_error")
+    node2.send_message(message_id=101, data=[0x03, 0x00], frame_type="data", error_type="form_error")
     bus.simulate_step()
     print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
     print(f"Node 2: REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
