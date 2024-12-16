@@ -35,7 +35,7 @@ class CANBus:
             if isinstance(message, ErrorFrame):
                 print(f"Node {node.node_id} broadcasting an Error Frame.")
                 self.state = BUSY
-                self.broadcast_error_frame(message.error_type or "generic_error")
+                self.broadcast_error_frame(message.error_type or "generic_error", message=None)
                 node.message_queue.pop(0) 
                 node.mode = WAITING
                 return
@@ -109,9 +109,9 @@ class CANBus:
             if node == winner_node:
                 continue
             if not self.error_reported and node.detect_and_handle_error(message):
-                self.error_reported = True  # Only the first node reports the error
-                self.broadcast_error_frame(message.error_type)
-                break  # Stop further error detection
+                self.error_reported = True 
+                self.broadcast_error_frame(message, message.error_type)
+                break 
 
         if not self.error_reported:
             for node in self.nodes:
@@ -124,6 +124,7 @@ class CANBus:
                 elif node.mode == TRANSMITTING:
                     node.decrement_transmit_error()
 
+            print(repr(message))
             winner_node.message_queue.pop(0)
 
         for node in self.nodes:
@@ -134,13 +135,17 @@ class CANBus:
     def get_current_bit(self):
         return self.current_bit
     
-    def broadcast_error_frame(self, error_type):
+    def broadcast_error_frame(self, message, error_type):
         eligible_receivers = [node for node in self.nodes if node.mode == RECEIVING and node.state != BUS_OFF]
         
         if eligible_receivers:
             reporter_node = random.choice(eligible_receivers)
-            print(f"Node {reporter_node.node_id} detected the {error_type} error and is reporting it.")
-            print(f"Broadcasting error frame for {error_type}.")
+            if message != None:
+                print(f"Node {reporter_node.node_id} detected the {error_type} error in the message {message.identifier} and is reporting it.")
+                print(f"Broadcasting error frame for {error_type}.")
+            else: 
+                print(f"Node {reporter_node.node_id} detected a generic error and is reporting it.")
+                print(f"Broadcasting error frame.")
             #reporter_node.increment_receive_error()
         # else:
         #     print("No eligible receivers to report the error.")

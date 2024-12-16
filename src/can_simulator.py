@@ -645,12 +645,10 @@ class InteractiveSimulation(ctk.CTkFrame):
         ctk.CTkButton(window, text="Send", command=send_message).pack(pady=10)
 
     def set_message_load(self, load_level):
-        """Set the message load based on dropdown selection."""
         self.message_load = load_level
         self.log_panel.add_log(f"Message load set to {load_level}.")
 
     def run_simulation(self):
-        """Run the simulation based on the selected message load."""
         num_nodes = len(self.playground.nodes)
         if self.message_load == "Low":
             max_messages = num_nodes
@@ -699,7 +697,6 @@ class InteractiveSimulation(ctk.CTkFrame):
         )
         node_dropdown.pack(pady=5)
 
-        # Node Properties
         ctk.CTkLabel(window, text="Component:").pack(pady=5)
         component_var = ctk.StringVar(value="Select Component")
         component_dropdown = ctk.CTkOptionMenu(
@@ -715,7 +712,6 @@ class InteractiveSimulation(ctk.CTkFrame):
         filter_entry.pack(pady=5)
 
         def update_node_properties(node_selection):
-            """Update fields with the selected node's properties."""
             node_id = int(node_selection.split()[1])
             node = self.playground.nodes[node_id]
             component_name = next(
@@ -727,7 +723,6 @@ class InteractiveSimulation(ctk.CTkFrame):
             filter_entry.insert(0, ",".join(map(str, node.filters)))
 
         def handle_component_selection(selection):
-            """Handle adding a new component or selecting an existing one."""
             if selection == "Add New Component":
                 new_component_name = f"Component {len(self.playground.components) + 1}"
                 self.playground.add_component(new_component_name)
@@ -735,17 +730,14 @@ class InteractiveSimulation(ctk.CTkFrame):
                 component_var.set(new_component_name)
 
         def save_changes():
-            """Save the changes made to the selected node."""
             node_id = int(node_var.get().split()[1])
             if node_id not in self.playground.nodes:
                 print("Invalid node selected.")
                 return
 
-            # Update filters
             filters = list(map(int, filter_entry.get().split(",")))
             self.playground.nodes[node_id].filters = filters
 
-            # Assign node to the selected component
             component_name = component_var.get()
             if component_name != "Select Component":
                 self.playground.assign_node_to_component(node_id, component_name)
@@ -753,7 +745,6 @@ class InteractiveSimulation(ctk.CTkFrame):
             print(f"Node {node_id} updated: Filters={filters}, Component={component_name}")
 
         def delete_node():
-            """Delete the selected node."""
             node_id = int(node_var.get().split()[1])
             if node_id in self.playground.nodes:
                 del self.playground.nodes[node_id]
@@ -766,13 +757,11 @@ class InteractiveSimulation(ctk.CTkFrame):
                 print(f"Node {node_id} deleted.")
 
         def add_new_node():
-            """Add a new node to the playground."""
             self.playground.add_node()
             node_dropdown.configure(
                 values=[f"Node {node_id}" for node_id in self.playground.nodes.keys()]
             )
 
-        # Buttons
         ctk.CTkButton(window, text="Save Changes", command=save_changes).pack(pady=10)
         ctk.CTkButton(window, text="Delete Node", command=delete_node).pack(pady=10)
         ctk.CTkButton(window, text="Add New Node", command=add_new_node).pack(pady=10)

@@ -77,7 +77,7 @@ class CANNode:
                 if message.error_type == "bit_error" and self.bit_flipped[0]:
                     print(f"Node {self.node_id} detected a Bit Monitoring Error.")
                     self.increment_transmit_error()
-                    self.bus.broadcast_error_frame("bit_monitoring_error")
+                    self.bus.broadcast_error_frame(message, "bit_monitoring_error")
                     self.stop_transmitting()
                     return None
 
@@ -98,20 +98,21 @@ class CANNode:
 
         if message.error_type == "stuff_error":
             print(f"Node {self.node_id} detected a Bit Stuffing Error.")
-            self.bus.broadcast_error_frame("stuff_error")
+            self.bus.broadcast_error_frame(message, "stuff_error")
             return False
         elif message.error_type == "crc_error":
             print(f"Node {self.node_id} detected a CRC Error.")
-            self.bus.broadcast_error_frame("crc_error")
+            self.bus.broadcast_error_frame(message, "crc_error")
             return False
         elif message.error_type == "form_error":
             print(f"Node {self.node_id} detected a Form Error.")
-            self.bus.broadcast_error_frame("form_error")
+            self.bus.broadcast_error_frame(message, "form_error")
             return False
         elif message.error_type == "ack_error":
             return False
         
         message.ack_slot = 0
+        print(f"Node {self.node_id} sent an ACK bit.")
         
         return True
     
@@ -126,7 +127,7 @@ class CANNode:
         if self.error_handler.detect_error(message.error_type, message):
             #print("here")
             #self.increment_receive_error()
-            self.bus.broadcast_error_frame(message.error_type)
+            self.bus.broadcast_error_frame(message, message.error_type)
             return True
         return False
 
