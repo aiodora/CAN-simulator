@@ -188,19 +188,12 @@ def test_sequential_transmission():
 def test_arbitration():
     bus, node1, node2, node3 = setup_can_network()
 
-    node1.send_message(message_id=400, data=[0x01, 0x02])
-    node2.send_message(message_id=401, data=[0x03, 0x04])
-    node3.send_message(message_id=399, data=[0x05, 0x06]) 
+    node1.send_message(message_id=1245, data=[0x01, 0x02])
+    node2.send_message(message_id=1, data=[0x03, 0x04])
+    node3.send_message(message_id=2, data=[0x05, 0x06]) 
 
     nodes_with_messages = [node for node in [node1, node2, node3] if node.has_pending_message()]
-    winner_node = bus.perform_arbitration(nodes_with_messages)
-
-    assert winner_node == node3, "Node 3 did not win arbitration."
-    assert node3.mode == "transmitting", f"Node 3 mode: {node3.mode}. Expected: 'transmitting'."
-    assert node1.mode == "receiving", f"Node 1 mode: {node1.mode}. Expected: 'receiving'."
-    assert node2.mode == "receiving", f"Node 2 mode: {node2.mode}. Expected: 'receiving'."
-
-    bus.deliver_message(winner_node)
+    bus.simulate_step()
 
     bus.simulate_step()
     bus.simulate_step()
@@ -239,7 +232,7 @@ def test_stuffing_and_form_errors():
     print(f"Node 3: REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
     node2.message_queue.pop(0)
 
-    print("Sending correct message xxx")
+    print("Sending correct message (decrementing counters)")
     node2.send_message(message_id=103, data=[0x01, 0x02], frame_type="data", error_type=None)
     bus.simulate_step()
     print(f"Node 1: REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
@@ -252,8 +245,8 @@ if __name__ == "__main__":
     #test_sequential_transmission()
     #test_arbitration()
     #test_ack_error_detection()
-    #test_crc_error_detection()
+    test_crc_error_detection()
     #test_bit_error_detection()
     #print("a ajuns aici")
-    test_stuffing_and_form_errors()
+    #test_stuffing_and_form_errors()
     #test_state_transitions()

@@ -2,7 +2,7 @@ import random
 
 class CANMessage:
     def __init__(self, identifier, sent_by, data=None, frame_type="Data"):
-        self.start_of_frame = [1] 
+        self.start_of_frame = [0] 
         self.identifier = identifier
         self.frame_type = frame_type
         if frame_type == "Data": self.rtr = [0]
@@ -11,9 +11,9 @@ class CANMessage:
         if data: self.data_field = data #at most 8 bytes
         else: self.data_field = []
         self.crc = self.calculate_crc()
-        self.crc_delimiter = 1
+        self.crc_delimiter = [1]
         self.ack_slot = 1 
-        self.ack_delimiter = 1 
+        self.ack_delimiter = [1]
         self.end_of_frame = [1] * 7
         self.intermission = [1] * 3
         self.error_type = None
@@ -107,6 +107,12 @@ class CANMessage:
 
         return bitstream
     
+    def get_ack_index(self):
+        base_length = 1 + 11 + 1 + 6 + 15 + 1  #SOF + ID + RTR + Control + CRC + CRC_DELIM
+        data_length = 8 * len(self.data_field)
+        ack_index = base_length + data_length 
+        return ack_index
+    
     def __repr__(self):
         if(self.identifier != None):
             return (f"CANMessage(type={self.frame_type}, id={self.identifier}, data={self.data_field}, crc={self.crc}, frame_type={self.rtr}), ack_slot={self.ack_slot}")
@@ -153,11 +159,12 @@ class CANMessage:
         self.crc ^= 0x1  
         print(f"CRC after: {self.crc}")
         self.error_type = "crc_error"
+        self.error_bit_index = len(self.get_bitstream()) - 16
 
     #ack error
     def corrupt_ack(self): 
         self.ack_slot = 1
-        self.error_bit_index = self.ack_slot
+        self.error_bit_index = self.get_ack_index()
         self.error_type = "ack_error"
 
     #form error
@@ -165,6 +172,59 @@ class CANMessage:
         self.end_of_frame = [0] * 7  
         self.error_bit_index = len(self.get_bitstream()) - 10
         self.error_type = "form_error"
+
+    def calculate_bit_pos(self):
+        pos = 0
+        positions = {}
+
+        if isinstance(self, DataFrame) or isinstance(self, RemoteFrame):
+            positions["SOF"] = pos
+            pos += 1
+
+            positions["ID"] = pos
+            pos += 11
+
+            positions["RTR"] = pos
+            pos += 1
+             
+            positions["CONTROL"] = pos
+            pos += 6
+
+            data_length = (len(self.data_field) * 8) if self.data_field else 0
+            if data_length > 0:
+                positions["DATA"] = pos
+                pos += data_length
+
+            positions["CRC"] = pos
+            pos += 15
+
+            positions["CRC_DELIM"] = pos
+            pos += 1
+
+            positions["ACK"] = pos
+            pos += 1
+
+            positions["ACK_DELIM"] = pos
+            pos += 1
+
+            positions["EOF"] = pos
+            pos += 7
+
+        elif isinstance(self, ErrorFrame):
+            positions["ERROR_FLAG"] = pos
+            pos += 6
+
+            positions["ERROR_DELIM"] = pos
+            pos += 8
+
+        elif isinstance(self, OverloadFrame):
+            positions["OVERLOAD_FLAG"] = pos
+            pos += 6
+
+            positions["OVERLOAD_DELIM"] = pos
+            pos += 8
+
+        return positions
     
 class DataFrame(CANMessage):
     def __init__(self, identifier, sent_by, data):

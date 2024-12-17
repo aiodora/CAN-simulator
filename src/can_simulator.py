@@ -1,7 +1,7 @@
 import customtkinter as ctk
 from tkinter import HORIZONTAL
 from can_bus import CANBus
-from can_node import CANNode
+from can_node import CANNode, TRANSMITTING, RECEIVING, WAITING, BUS_OFF, ERROR_PASSIVE, ERROR_ACTIVE
 from can_message import CANMessage, DataFrame, RemoteFrame, ErrorFrame, OverloadFrame
 import time
 import random
@@ -12,6 +12,13 @@ ctk.set_default_color_theme("green")
 LOW = "low"
 MEDIUM = "medium"
 HIGH = "high"
+
+COMPONENTS = {
+    "Control Unit": {"id_range": (0, 511), "listens_to": ["Control Unit", "Sensors", "Actuators"]},
+    "Power Supply Unit": {"id_range": (512, 1023), "listens_to": ["Control Unit","Power Supply Unit", "Sensors"]},
+    "Sensors": {"id_range": (1024, 1535), "listens_to": ["Control Unit","Sensors", "Actuators"]},
+    "Actuators": {"id_range": (1536, 2047), "listens_to": ["Control Unit", "Sensors"]}
+}
 
 class CANSimulatorApp(ctk.CTk):
     def __init__(self):
@@ -76,61 +83,17 @@ class Playground(ctk.CTkFrame):
 
         self.canvas.configure(xscrollcommand=self.scroll_x.set)
 
-        self.bus_line = self.canvas.create_line(50, 580, 2000, 580, fill="lightgrey", width=5)
-        self.canvas.create_text(80, 560, text="CAN Bus", fill="white", font=('Arial', 14, 'bold'))
+        self.bus_line = self.canvas.create_line(50, 530, 2000, 530, fill="lightgrey", width=5)
+        self.canvas.create_text(60, 510, text="CAN Bus", fill="white", font=('Arial', 14, 'bold'))
         self.clock_label = self.canvas.create_text(100, 50, text = f"Clock = {self.clock}", fill="white", font=("Arial", 20, "bold"), tag="clock")
-
-    def animate_message(self, sender_id, receiver_id):
-            if sender_id not in self.node_positions or receiver_id not in self.node_positions:
-                return
-
-            sender_pos = self.node_positions[sender_id]
-            receiver_pos = self.node_positions[receiver_id]
-
-            message = self.canvas.create_oval(
-                sender_pos[0] - 10, sender_pos[1] - 10, sender_pos[0] + 10, sender_pos[1] + 10,
-                fill="green", outline=""
-            )
-
-            def move_message(step=0):
-                dx = (receiver_pos[0] - sender_pos[0]) / 50
-                dy = (receiver_pos[1] - sender_pos[1]) / 50
-                self.canvas.move(message, dx, dy)
-
-                if step < 50:
-                    self.canvas.after(20, lambda: move_message(step + 1))
-                else:
-                    self.canvas.delete(message)
-                    self.glow_node(receiver_id)  
-
-            self.glow_node(sender_id, transmitting=True) 
-            move_message()
-
-    def glow_node(self, node_id, transmitting=False):
-        if node_id not in self.node_visuals:
-            return
-
-        color = "green" if transmitting else "red"
-        node_rect = self.node_visuals[node_id]["rect"]
-
-        def pulse(step=0):
-            glow_color = f"#{255 - step:02x}{255 - step:02x}00" if transmitting else f"#{255 - step:02x}00{255 - step:02x}"
-            self.canvas.itemconfig(node_rect, outline=glow_color, width=3)
-
-            if step < 100:
-                self.canvas.after(10, lambda: pulse(step + 10))
-            else:
-                self.canvas.itemconfig(node_rect, outline="white", width=2) 
-
-        pulse()
 
     def add_node(self, node_id=None, position=None, component_name=None):
         if len(self.nodes) >= self.max_nodes:
             return
 
         node_id = node_id or self.next_node_id
-        x_position = 150 + len(self.nodes) * 150
-        y_position = 450 if len(self.nodes) % 2 == 0 else 710  
+        x_position = 110 + len(self.nodes) * 150
+        y_position = 410 if len(self.nodes) % 2 == 0 else 660  
         position = (x_position, y_position)
 
         node = CANNode(node_id, self.bus)
@@ -146,8 +109,8 @@ class Playground(ctk.CTkFrame):
         if component_name:
             self.assign_node_to_component(node_id, component_name)
         else:
-            node.produced_ids = None
-            node.filters = None
+            node.produced_ids = list(range(0, 2048))
+            node.filters = list(range(0, 2048))
 
         self.draw_nodes()
         self.adjust_canvas_and_bus()
@@ -160,60 +123,21 @@ class Playground(ctk.CTkFrame):
 
         self.canvas.configure(scrollregion=(0, 0, max_x_position, 1000))
 
-        self.canvas.coords(self.bus_line, 50, 580, max_x_position, 580)
-
-    def recalculate_id_ranges(self):
-        if not self.components:
-            return
-        
-        num_components = len(self.components)
-        id_ranges = self.total_id_ranges // num_components
-
-        start = 0 
-        for comp in self.components:
-            end = start + id_ranges - 1 
-            self.components[comp] = (start, end)
-
-            for node_id in self.components[comp]:
-                if node_id in self.nodes:
-                    node = self.nodes[node_id]
-                    node.produced_ids = list(range(start, end + 1))
-                    node.filters = node.produces_ids
-            start = end + 1
-
-    def add_component(self, component_name):
-        if component_name in self.components:
-            return
-
-        self.components[component_name] = []
-        self.recalculate_id_ranges()
-
-    def remove_component(self, component_name):
-        if component_name not in self.components:
-            return
-
-        for node_id in self.components[component_name]:
-            if node_id in self.nodes:
-                node = self.nodes[node_id]
-                node.produced_ids = list(range(0, 2048))
-                node.filters = node.produced_ids
-
-        self.components.pop(component_name)
-        self.recalculate_id_ranges() 
+        self.canvas.coords(self.bus_line, 50, 530, max_x_position, 530)
 
     def assign_node_to_component(self, node_id, component_name):
-        if component_name not in self.components or node_id not in self.nodes:
+        if component_name not in COMPONENTS or node_id not in self.nodes:
             return
         
-        if node_id not in self.nodes:
-            return
-        
-        for nodes in self.components.values():
-            if node_id in nodes:
-                nodes.remove(node_id)
+        component = COMPONENTS[component_name]
+        node = self.nodes[node_id]
 
-        self.components[component_name].append(node_id)
-        self.recalculate_id_ranges()
+        node.produced_ids = list(range(component["id_range"][0], component["id_range"][1] + 1))
+
+        node.filters = []
+        for listening_component in component["listens_to"]:
+            listening_ids = range(COMPONENTS[listening_component]["id_range"][0], COMPONENTS[listening_component]["id_range"][1] + 1)
+            node.filters.extend(listening_ids)
 
     def reset(self):
         self.nodes.clear()
@@ -231,8 +155,8 @@ class Playground(ctk.CTkFrame):
         for node_id, (x, y) in self.node_positions.items():
             node_width = 100
             node_height = 160
-            top = y - node_height if y < 580 else y
-            bottom = y if y < 580 else y + node_height
+            top = y - node_height if y < 530 else y
+            bottom = y if y < 530 else y + node_height
 
             node_rect = self.canvas.create_rectangle(
                 x - node_width // 2, top, x + node_width // 2, bottom, outline="white", width=2
@@ -253,7 +177,7 @@ class Playground(ctk.CTkFrame):
             )
 
             connection_line = self.canvas.create_line(
-                x, bottom if y < 580 else top, x, 580, width=2, fill="grey"
+                x, bottom if y < 530 else top, x, 530, width=2, fill="grey"
             )
 
             self.node_visuals[node_id] = {
@@ -269,7 +193,7 @@ class Playground(ctk.CTkFrame):
             self.node_info_labels[node_id] = info_label
 
             self.canvas.create_text(
-                x, top - 20 if y < 580 else bottom + 20, text=f"Node {node_id}", fill="lightgrey", font=("Arial", 14, "bold")
+                x, top - 20 if y < 530 else bottom + 20, text=f"Node {node_id}", fill="lightgrey", font=("Arial", 14, "bold")
             )
 
     def update_node_state(self, node_id, transmitting=False, filtering=False):
@@ -299,6 +223,109 @@ class Playground(ctk.CTkFrame):
         info_text = f"State: {node.state}\nMode: {node.mode}\nTEC: {node.transmit_error_counter}\nREC: {node.receive_error_counter}"
         self.canvas.itemconfig(self.node_info_labels[node_id], text=info_text)
 
+    def animate_message_transmission(self, sender, receivers, message):
+        sender_pos = self.node_positions[sender.node_id]
+        message_visual = self.canvas.create_oval(
+            sender_pos[0] - 10, sender_pos[1] - 10, sender_pos[0] + 10, sender_pos[1] + 10,
+            fill="blue", outline=""
+        )
+
+        def to_bus(step=0):
+            bus_pos = (sender_pos[0], 530) 
+            dx = (bus_pos[0] - sender_pos[0]) / 20
+            dy = (bus_pos[1] - sender_pos[1]) / 20
+            self.canvas.move(message_visual, dx, dy)
+
+            if step < 20:
+                self.canvas.after(50, lambda: to_bus(step + 1))
+            else:
+                self.glow_bus_line(True)
+                transmit_to_receivers()
+
+        def transmit_to_receivers():
+            def to_receiver(receiver, step=0):
+                receiver_pos = self.node_positions[receiver.node_id]
+                dx = (receiver_pos[0] - sender_pos[0]) / 20
+                dy = (receiver_pos[1] - 530) / 20
+                self.canvas.move(message_visual, dx, dy)
+                if step < 20:
+                    self.canvas.after(50, lambda: to_receiver(receiver, step + 1))
+                else:
+                    self.glow_node(receiver.node_id, transmitting=False)
+
+            for receiver in receivers:
+                self.glow_node(receiver.node_id, transmitting=True)
+                self.canvas.after(200, lambda: to_receiver(receiver))
+
+            self.canvas.after(1000, lambda: self.clear_animation(message_visual))
+            self.canvas.after(1000, lambda: self.glow_bus_line(False))
+
+        to_bus()
+
+    def glow_bus_line(self, active=True):
+        color = "yellow" if active else "lightgrey"
+        self.canvas.itemconfig(self.bus_line, fill=color)
+
+    def glow_node(self, node_id, transmitting=False, receiving=False):
+        if node_id not in self.node_visuals:
+            return
+
+        if transmitting:
+            color = "green"
+        elif receiving:
+            color = "red"
+        else:
+            color = "grey30"
+
+        self.canvas.itemconfig(self.node_visuals[node_id]["frame"], fill=color)
+
+    def clear_animation(self, visual):
+        self.canvas.delete(visual)
+
+    def process_bits(self, sender, message):
+        bitstream = message.get_bitstream()  # Get the bitstream of the message
+        receivers = [node for node in self.nodes.values() if node != sender]
+        arbitration_lost = False
+
+        def transmit_bit_step(bit_index=0):
+            if bit_index >= len(bitstream):
+                self.finish_transmission(sender, message)
+                return
+            
+            current_bit = bitstream[bit_index]
+            print(f"Transmitting bit {bit_index}: {current_bit} (Node {sender.node_id})")
+
+            self.master.log_panel.append_bit(message) 
+            self.animate_message_transmission(sender, receivers, message)
+
+            for node in receivers:
+                if node.mode == TRANSMITTING:
+                    node_bit = node.transmit_bit()
+                    if node_bit < current_bit:
+                        arbitration_lost = True
+                        sender.mode = RECEIVING 
+                        node.mode = TRANSMITTING 
+                        print(f"Node {sender.node_id} lost arbitration at bit {bit_index}")
+                        break
+
+            if not arbitration_lost:
+                self.after(100, lambda: transmit_bit_step(bit_index + 1))
+            else:
+                print(f"Arbitration resolved. Node {sender.node_id} is now RECEIVING.")
+                self.update_node_state(sender.node_id, transmitting=False)
+
+        # Start bit-by-bit transmission
+        sender.mode = TRANSMITTING
+        self.update_node_state(sender.node_id, transmitting=True)
+        transmit_bit_step()
+
+    def finish_transmission(self, sender, message):
+        print(f"Node {sender.node_id} completed message transmission: ID {message.identifier}")
+        sender.mode = WAITING
+        self.update_node_state(sender.node_id, transmitting=False)
+        self.master.log_panel.add_log(f"Message {message.identifier} successfully sent by Node {sender.node_id}")
+
+
     def toggle_bus_activity(self, active=True):
         color = "yellow" if active else "lightgrey"
         self.canvas.itemconfig(self.bus_line, fill=color)
@@ -317,20 +344,42 @@ class Playground(ctk.CTkFrame):
                 self.canvas.itemconfig(label, text="")
 
     def start_clock(self):
-        if not self.clock_running: 
+        #print("sahfshfsdgfhg")
+        #print(self.clock_running)
+        if self.clock_running: 
             self.clock_running = True
             self.update_clock()
 
     def update_clock(self):
+        #print(f"Clock: {self.clock}")
         if self.clock_running:
             self.clock += 1
             self.display_clock()
-            self.after(1000, self.update_clock) 
+
+            transmitting_node = None
+            for node in self.nodes.values():
+                if node.mode == TRANSMITTING and node.has_pending_message():
+                    transmitting_node = node
+                    break
+
+            if transmitting_node:
+                current_bit = transmitting_node.transmit_bit()
+
+                message, bitstream = transmitting_node.message_queue[0]
+                self.master.log_panel.display_bitstream_progress(bitstream, transmitting_node.current_bit_index)
+            else:
+                pass
+                #self.master.log_panel.add_log(f"\nClock {self.clock}:No nodes transmitting.")
+
+            self.after(500, self.update_clock) 
 
     def reset_clock(self):
         self.clock_running = False 
         self.clock = 0 
         self.display_clock() 
+
+    def display_clock(self):
+        self.canvas.itemconfig(self.clock_label, text=f"Clock = {self.clock}")
 
 class LogPanel(ctk.CTkFrame):
     def __init__(self, parent):
@@ -341,15 +390,16 @@ class LogPanel(ctk.CTkFrame):
         self.log_text = ctk.CTkTextbox(self.log_frame, state="disabled", wrap="none", height=200)
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
-        self.scroll_y = ctk.CTkScrollbar(self.log_frame, command=self.log_text.yview)
-        self.scroll_y.grid(row=0, column=1, sticky="ns")
+        # self.scroll_y = ctk.CTkScrollbar(self.log_frame, command=self.log_text.yview)
+        # self.scroll_y.grid(row=0, column=1, sticky="ns")
 
-        self.log_text.configure(yscrollcommand=self.scroll_y.set)
+        # self.log_text.configure(yscrollcommand=self.scroll_y.set)
         self.log_frame.grid_rowconfigure(0, weight=1)
         self.log_frame.grid_columnconfigure(0, weight=1)
 
-        self.current_bits_line = ""
-        self.message_type_line = ""
+        self.partial_bitstream = []
+        self.current_position = 0
+        self.field_positions = []
 
     def add_log(self, message):
         self.log_text.configure(state="normal")
@@ -361,6 +411,60 @@ class LogPanel(ctk.CTkFrame):
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
+
+    def init_bitstream_display(self, message):
+        self.partial_bitstream = []
+        self.current_position = 0
+
+        positions = message.calculate_bit_pos()
+        bitstream = message.get_bitstream()
+
+        self.field_positions = []
+        for field, start_pos, end_pos in self._calculate_field_positions(positions, len(bitstream)):
+            self.field_positions.append((field, start_pos, end_pos))
+            self.partial_bitstream += [" "] * (end_pos - start_pos)
+
+        headers = " | ".join(f"{field}".center(end - start) for field, start, end in self.field_positions)
+        #self.clear_log()
+        self.add_log("\nBus Data:")
+        self.add_log(headers)
+        self._update_bitstream_display()
+
+    def _calculate_field_positions(self, positions, bitstream_length):
+        field_positions = []
+        for field, start in positions.items():
+            next_field = list(positions.keys())[list(positions.keys()).index(field) + 1] if field != "EOF" else None
+            end = positions[next_field] if next_field else bitstream_length
+            field_positions.append((field, start, end))
+        return field_positions
+
+    def append_bit(self, message):
+        bitstream = message.get_bitstream()
+        error_index = message.error_bit_index
+
+        if self.current_position < len(self.partial_bitstream):
+            current_bit = str(bitstream[self.current_position])
+
+            if self.current_position == error_index:
+                self.partial_bitstream[self.current_position] = f"({current_bit})" 
+            else:
+                self.partial_bitstream[self.current_position] = current_bit 
+
+            self.current_position += 1 
+
+        self._update_bitstream_display()
+
+    def _update_bitstream_display(self):
+        visible_bits = ""
+        for field, start, end in self.field_positions:
+            segment_bits = "".join(self.partial_bitstream[start:end])
+            visible_bits += f"{segment_bits} | "
+
+        self.clear_log()
+        headers = " | ".join(f"{field}".center(end - start) for field, start, end in self.field_positions)
+        self.add_log("\nBus Data:")
+        self.add_log(headers)
+        self.add_log(visible_bits.strip(" | "))
 
 class PredefinedScenarios(ctk.CTkFrame):
     def __init__(self, master, playground):
@@ -476,7 +580,6 @@ class PredefinedScenarios(ctk.CTkFrame):
         )
 
     def disable_other_scenarios(self, active_scenario):
-        """Disable other options based on the active scenario."""
         self.frame_dropdown.configure(state="disabled" if active_scenario != "frame" else "normal")
         self.arbitration_btn.configure(state="disabled" if active_scenario != "arbitration" else "normal")
         self.error_dropdown.configure(state="disabled" if active_scenario != "error" else "normal")
@@ -484,13 +587,11 @@ class PredefinedScenarios(ctk.CTkFrame):
 
     def run_scenario(self):
         self.playground.clock_running = True
-        self.playground.start_clock()
         if self.active_scenario == "frame":
-            self.log_panel.add_log(f"Running message transmission ({self.frame_dropdown.get()})...")
-            #logic
+            #self.log_panel.add_log(f"Running message transmission ({self.frame_dropdown.get()})...")
+            self.run_data_frame()
         elif self.active_scenario == "arbitration":
-            self.log_panel.add_log("Running arbitration test...")
-            #logic
+            self.run_arbitration_test()
         elif self.active_scenario == "error":
             selected_error = self.error_dropdown.get()
             self.log_panel.add_log(f"Injecting {selected_error}...")
@@ -529,8 +630,54 @@ class PredefinedScenarios(ctk.CTkFrame):
 
     def initialize_predefined_scenarios(self):
         self.playground.reset()
+        component_names = list(COMPONENTS.keys())
+
         for i in range(12):
             self.playground.add_node(node_id=i + 1)
+            component_name = component_names[i % len(component_names)]
+
+            self.playground.assign_node_to_component(i + 1, component_name)
+        
+
+    def run_data_frame(self):
+        self.log_panel.add_log("Starting Data Frame Transmission...")
+
+        sender = random.choice(list(self.playground.nodes.values()))
+        receivers = [n for n in self.playground.nodes.keys() if n != sender]
+
+        message = DataFrame(
+            identifier=random.choice(sender.produced_ids), 
+            sent_by=sender.node_id, 
+            data=[random.randint(0, 255)] 
+        )
+
+        sender.add_message_to_queue(message)
+
+        #self.log_panel.add_log(f"Node {sender} is transmitting Message ID: {message.identifier}")
+        print(repr(message))
+        print(message.get_bitstream())
+        self.log_panel.init_bitstream_display(message)
+        #self.playground.start_clock()
+        self.playground.process_bits(sender, message)
+
+    def run_arbitration_test(self):
+        self.log_panel.add_log("Starting Arbitration Test...")
+        senders = random.sample(list(self.playground.nodes.keys()), 3)
+
+        for sender in senders:
+            message = DataFrame(identifier=random.randint(0, 10), sent_by=sender, data=[random.randint(0, 255)])
+            self.playground.nodes[sender].add_message_to_queue(message)
+
+        self.log_panel.add_log(f"Nodes {senders} are competing for arbitration...")
+        self.playground.start_clock()
+
+    def run_node_failure(self):
+        self.log_panel.add_log("Starting Node Failure Test...")
+        node = random.choice(list(self.playground.nodes.keys()))
+        self.playground.nodes[node].state = "Error Passive"
+        self.log_panel.add_log(f"Node {node} has transitioned to Error Passive state.")
+        self.playground.start_clock() 
+
 
 class InteractiveSimulation(ctk.CTkFrame):
     def __init__(self, master, playground):

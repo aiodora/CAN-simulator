@@ -65,7 +65,7 @@ class CANNode:
 
     def transmit_bit(self):
         if not self.has_pending_message():
-            return 1 
+            return
 
         message, bitstream = self.message_queue[0]
         if self.current_bit_index < len(bitstream):
@@ -74,7 +74,7 @@ class CANNode:
 
             #bit monitoring
             if self.mode == TRANSMITTING and not self.bus.in_arbitration:
-                if message.error_type == "bit_error" and self.bit_flipped[0]:
+                if message.error_type == "bit_error" and self.current_bit_index == message.error_bit_index:
                     print(f"Node {self.node_id} detected a Bit Monitoring Error.")
                     self.increment_transmit_error()
                     self.bus.broadcast_error_frame(message, "bit_monitoring_error")
@@ -83,11 +83,6 @@ class CANNode:
 
             self.current_bit_index += 1
             return transmitted_bit
-        else:
-            self.message_queue.pop(0) 
-            self.current_bit_index = 0
-            self.mode = WAITING 
-            return 1
 
     def receive_message(self, message):
         if message.identifier not in self.filters:
@@ -201,10 +196,26 @@ class CANNode:
         self.mode = WAITING
         self.current_bit_index = 0
 
-    def process_received_bit(self, bit):
-        if self.mode == RECEIVING:
-            print(f"Node {self.node_id} received bit: {bit}")
-            if bit != self.bus.get_current_bit():
-                print(f"Node {self.node_id} detected a bit error.")
-                return True 
-        return False
+    def process_received_bit(self, message, winner_node):
+        if self.mode == RECEIVING and self.state != BUS_OFF:
+            #print(f"Node {self.node_id} received bit: {bit}")
+            if message.error_type == "ack_error" and winner_node.current_bit_index == message.error_bit_index:
+                print(f"Node {self.node_id} detected an Acknowledgement Error.")
+                self.bus.broadcast_error_frame(message, "stuff_error")
+                #print(f"Node {self.node_id} detected a bit error.")
+                return False
+            elif message.error_type == "stuff_error"  and winner_node.current_bit_index == message.error_bit_index:
+                print(f"Node {self.node_id} detected a Bit Stuffing Error.")
+                self.bus.broadcast_error_frame(message, "stuff_error")
+                return False
+            elif message.error_type == "crc_error" and winner_node.current_bit_index == message.error_bit_index:
+                print(f"Node {self.node_id} detected a CRC Error.")
+                self.bus.broadcast_error_frame(message, "crc_error")
+                return False
+            elif message.error_type == "form_error" and winner_node.current_bit_index == message.error_bit:
+                print(f"Node {self.node_id} detected a Form Error.")
+                self.bus.broadcast_error_frame(message, "form_error")
+                return False
+            elif message.error_type == None and (message.isinstance(DataFrame) or message.isinstance(RemoteFrame)) and winner_node.current_bit_index == message.get_ack_index():
+                message.ack_slot = 0 
+        return True
