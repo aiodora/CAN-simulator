@@ -18,7 +18,7 @@ class CANMessage:
         self.sender_id = sent_by
         self.bit_flipped = [None, None]
         self.error_bit_index = None
-        self.transmitted_bitstream = None  # Holds the corrupted bitstream
+        self.transmitted_bitstream = None 
 
     def calculate_control_field(self, data):
         data_length_code = min(len(data), 8) if data else 0
@@ -71,7 +71,7 @@ class CANMessage:
             else:
                 consecutive_bits = 1
             stuffed_bits.append(last_bit)
-            if consecutive_bits == 5:  # Insert a stuff bit after 5 consecutive bits
+            if consecutive_bits == 6:  # Insert a stuff bit after 5 consecutive bits
                 stuffed_bits.append(1 - last_bit)
                 consecutive_bits = 0
             last_bit = bit
@@ -132,12 +132,14 @@ class CANMessage:
             # Combine stuffed section with the excluded parts
             bitstream = stuffed_section + bitstream[-13:]
 
+        transmitted_bitstream = bitstream.copy()
         return bitstream.copy()
 
     def get_ack_index(self):
-        base_length = 1 + 11 + 1 + 6 + 15  # SOF + ID + RTR + Control + CRC
-        data_length = 8 * len(self.data_field)
-        ack_index = base_length + data_length 
+        # base_length = 1 + 11 + 1 + 6 + 15 + 1  # SOF + ID + RTR + Control + CRC + CRC Delimiter
+        # data_length = 8 * len(self.data_field)
+        # ack_index = base_length + data_length 
+        ack_index = len(self.get_bitstream()) - 11
         return ack_index
 
     def update_ack(self):
@@ -185,6 +187,7 @@ class CANMessage:
             if flat_bitstream[i:i + 5] == [flat_bitstream[i]] * 5:
                 stuffing_bit = 1 - flat_bitstream[i] 
                 flat_bitstream.insert(i + 5, stuffing_bit) 
+                flat_bitstream[i + 5] = flat_bitstream[i]
                 self.error_bit_index = i + 5
                 self.error_type = "stuff_error"
                 print(f"Bit stuffing error injected at index {i + 5}.")
@@ -247,6 +250,9 @@ class CANMessage:
     def get_eof_bit_index(self):
         # Return the starting bit index of EOF field
         return 1 + 11 + 1 + 6 + (8 * len(self.data_field)) + 15 + 1 + 1 + 1 + 7
+    
+    def get_bitstream_length(self):
+        return len(self.get_bitstream())
 
 class DataFrame(CANMessage):
     def __init__(self, identifier, sent_by, data):

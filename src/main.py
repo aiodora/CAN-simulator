@@ -1,7 +1,7 @@
 # main.py
 import time
 from can_bus import CANBus
-from can_node import CANNode, ERROR_ACTIVE
+from can_node import CANNode, ERROR_ACTIVE, ERROR_PASSIVE, BUS_OFF
 from can_message import DataFrame, RemoteFrame, ErrorFrame, OverloadFrame
 
 def setup_can_network():
@@ -88,22 +88,22 @@ def test_state_transitions():
     print("Forcing Node1 to transition to ERROR_PASSIVE...")
     msg_id = 101
     node1.transmit_error_counter = 126
-    for _ in range(70):
-        node1.send_message(message_id=msg_id, data=[0x01, 0x02], error_type="form_error")
+    node1.send_message(message_id=100, data=[0x01, 0x02], error_type="form_error")
+    for _ in range(75):
         bus.simulate_step()
         msg_id += 1
-    print(f"Node1 => state={node1.state}, REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+    #print(f"Node1 => state={node1.state}, REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
 
-    print(f"Node1 final state: {node1.state}")
+    #print(f"Node1 final state: {node1.state}")
 
     node1.transmit_error_counter = 253
     # Additional transmissions to push Node1 to BUS_OFF
     print("Forcing Node1 to transition to BUS_OFF...")
+    node1.send_message(message_id=200, data=[0x01, 0x02], error_type="form_error")
     for _ in range(65):
-        node1.send_message(message_id=msg_id, data=[0x01, 0x02], error_type="form_error")
         bus.simulate_step()
         msg_id += 1
-        print(f"Node1 => state={node1.state}, REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
+        #print(f"Node1 => state={node1.state}, REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
 
 def test_retransmissions():
     """
@@ -185,27 +185,28 @@ def test_stuffing_and_form_errors():
     bus, node1, node2, node3 = setup_can_network()
 
     print("1) Testing Stuffing Error from Node1")
-    node1.send_message(message_id=101, data=[0x01, 0x02], frame_type="data", error_type="stuff_error")
-    for _ in range(5):
+    node1.send_message(message_id=1, data=[0x01, 0x02], frame_type="data", error_type="stuff_error")
+    for _ in range(100):
         bus.simulate_step()
+        print(f"Node1 => REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}; Node2 => REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}; Node3 => REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
     print(f"Node1 => REC={node1.receive_error_counter}, TEC={node1.transmit_error_counter}")
     print(f"Node2 => REC={node2.receive_error_counter}, TEC={node2.transmit_error_counter}")
     print(f"Node3 => REC={node3.receive_error_counter}, TEC={node3.transmit_error_counter}")
 
-    print("2) Node2 sends a correct message to decrement counters")
-    node2.send_message(message_id=99, data=[0x01, 0x02], frame_type="data", error_type=None)
-    for _ in range(5):
-        bus.simulate_step()
+    # print("2) Node2 sends a correct message to decrement counters")
+    # node2.send_message(message_id=99, data=[0x01, 0x02], frame_type="data", error_type=None)
+    # for _ in range(len(node2.message_queue[0].get_bitstream()) + 1):
+    #     bus.simulate_step()
 
-    print("3) Testing Form Error from Node2")
-    node2.send_message(message_id=101, data=[0x03, 0x00], frame_type="data", error_type="form_error")
-    for _ in range(5):
-        bus.simulate_step()
+    # print("3) Testing Form Error from Node2")
+    # node2.send_message(message_id=100, data=[0x03, 0x00], frame_type="data", error_type="form_error")
+    # for _ in range(len(node2.message_queue[0].get_bitstream()) + 1 + 14):
+    #     bus.simulate_step()
 
-    print("4) Another correct message from Node2 to decrement counters")
-    node2.send_message(message_id=103, data=[0x01, 0x02], frame_type="data", error_type=None)
-    for _ in range(5):
-        bus.simulate_step()
+    # print("4) Another correct message from Node2 to decrement counters")
+    # node2.send_message(message_id=98, data=[0x01, 0x02], frame_type="data", error_type=None)
+    # for _ in range(len(node2.message_queue[0].get_bitstream()) + 1):
+    #     bus.simulate_step()
 
 if __name__ == "__main__":
     print("Starting CAN Simulation Tests...\n")
@@ -217,9 +218,9 @@ if __name__ == "__main__":
     #test_bit_error_detection()
     #test_crc_error_detection()
     #test_ack_error_detection()
-    test_state_transitions()
+    #test_state_transitions()
     # test_retransmissions()
     #test_arbitration()
-    # test_stuffing_and_form_errors()
+    test_stuffing_and_form_errors()
 
     #print("\nAll requested tests complete.")

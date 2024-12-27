@@ -1,7 +1,8 @@
 # can_bus.py
-from can_node import CANNode, WAITING, TRANSMITTING, RECEIVING, BUS_OFF 
+
+from can_node import CANNode, WAITING, TRANSMITTING, RECEIVING, BUS_OFF
 from can_message import DataFrame, ErrorFrame, OverloadFrame, RemoteFrame, CANMessage
-import random 
+import random
 import time
 
 IDLE = "Idle"
@@ -10,20 +11,22 @@ WAITING_ACK = "Waiting for ACK"
 
 class CANBus:
     def __init__(self):
-        self.nodes = []  
-        self.current_bit = 1  # By default, the current bit that is sent is 1 
-        self.in_arbitration = False  
+        self.nodes = []
+        self.current_bit = 1  # default bit sent on the bus
+        self.in_arbitration = False
         self.error = False
         self.transmission_queue = []
-        self.current_bitstream = [] 
-        self.bitstream_display = []  # Using this for the simulation 
-        self.state = IDLE 
+        self.current_bitstream = []
+        self.bitstream_display = []
+        self.state = IDLE
         self.error_reported = False
+        self.overload_request = False
+
         self.arbitration_in_progress = False
         self.arbitration_bit_index = 0
         self.current_winner = None
         self.arbitration_contenders = []
-    
+
     def connect_node(self, node):
         self.nodes.append(node)
         node.set_bus(self)
@@ -34,71 +37,63 @@ class CANBus:
 
     def simulate_step(self):
         """
-        Called once per 'clock tick' => send exactly ONE bit.
-        
-        Steps:
-          1) If we do NOT have a current_winner or arbitration_in_progress,
-             gather active nodes (with pending messages + not BUS_OFF).
-             - If none => bus idle
-             - If exactly 1 => that is the winner
-             - Else => start arbitration
-          2) If arbitration_in_progress => do_one_arbitration_bit()
-          3) If current_winner => transmit_one_data_bit()
-             - if done => finalize
+        1) no current_winner or not arbitration_in_progress => find active nodes (nodes that have pending messages but are not BUS_OFF)
+           a. 0 => idle;
+           b. 1 => winner found;
+           c. >1 => start arbitration to find one winner;
+        2) arbitration_in_progress => do_one_arbitration_bit()
+        3) self.current_winner is diff then None => transmit_one_data_bit()
+           If done => finalize
         """
-        # Clear old step’s bit info
         self.current_bitstream.clear()
         self.bitstream_display.clear()
 
-        # 1) If no current winner & not in arbitration => gather active nodes
+        # 1)
         if not self.current_winner and not self.arbitration_in_progress:
             active_nodes = [n for n in self.nodes if n.has_pending_message() and n.state != BUS_OFF]
+            # a.
             if not active_nodes:
-                # no messages => idle
-                print("No nodes with pending messages => Bus is IDLE.")
-                self.state = IDLE
+                print("No nodes with pending messages => bus idle => bit=1")
                 self.current_bit = 1
+                self.state = IDLE
                 return
 
+            # b.
             if len(active_nodes) == 1:
-                # single => immediate winner
                 self.current_winner = active_nodes[0]
                 self.arbitration_in_progress = False
                 self.in_arbitration = False
                 self.arbitration_bit_index = 0
                 self.state = BUSY
 
-                for node in self.nodes:
-                    if node != self.current_winner and node.mode != BUS_OFF:
-                        node.mode = RECEIVING
+                for nd in self.nodes:
+                    if nd != self.current_winner and nd.state != BUS_OFF:
+                        nd.mode = RECEIVING
+            # c.
             else:
-                # multiple => start arbitration
                 self.arbitration_contenders = active_nodes[:]
                 self.arbitration_in_progress = True
                 self.in_arbitration = True
                 self.arbitration_bit_index = 0
                 self.state = BUSY
-                for node in self.nodes:
-                    if node not in self.arbitration_contenders and node.mode != BUS_OFF:
-                        node.mode = RECEIVING
-                    else:
-                        node.mode = TRANSMITTING
-                ids = [n.node_id for n in self.arbitration_contenders]
-                print(f"Starting arbitration among {ids}")
+                for nd in self.nodes:
+                    if nd in self.arbitration_contenders and nd.state != BUS_OFF:
+                        nd.mode = TRANSMITTING
+                    elif nd.state != BUS_OFF:
+                        nd.mode = RECEIVING
 
-        # 2) If arbitration_in_progress & no winner => do one arbitration bit
+                print(f"Starting arbitration among {[nd.node_id for nd in self.arbitration_contenders]}")
+
+        # 2)
         if self.arbitration_in_progress and not self.current_winner:
             self.do_one_arbitration_bit()
 
-        # 3) If we have a winner => transmit one data bit
+        # 3)
         if self.current_winner:
             self.transmit_one_data_bit(self.current_winner)
-
-            # if finished => finalize
             if self.current_winner.is_transmission_complete():
-                print(f"Node {self.current_winner.node_id} completed message.")
+                print(f"Node {self.current_winner.node_id} => completed message.")
                 self.finalize_message(self.current_winner)
-                # reset
                 self.current_winner = None
                 self.arbitration_in_progress = False
                 self.in_arbitration = False
@@ -107,206 +102,195 @@ class CANBus:
                 self.state = IDLE
 
     def do_one_arbitration_bit(self):
-        """
-        Perform 1 arbitration bit among self.arbitration_contenders.
-         - If exactly 1 remains => current_winner
-         - If multiple remain => increment arbitration_bit_index
-         - If bit_index > 12 => forcibly pick first
-        """
-        # The first arbitration bit => SOF=0
         if self.arbitration_bit_index == 0:
-            self.current_bit = 0
+            self.current_bit = 0  # SOF=0
             self.arbitration_bit_index = 1
             print("Arbitration started (SOF=0).")
             return
 
-        # If we exceed 12 bits => forcibly pick the first
         if self.arbitration_bit_index > 12:
             self.current_winner = self.arbitration_contenders[0]
-            print(f"Arbitration done. Node {self.current_winner.node_id} won (forced).")
+            print(f"Arbitration done => forced winner Node {self.current_winner.node_id}")
             self.arbitration_in_progress = False
             return
 
-        # For each contender => get the bit at arbitration_bit_index
         bits_from_nodes = []
-        for node in self.arbitration_contenders:
-            msg = node.message_queue[0]
+        for nd in self.arbitration_contenders:
+            msg = nd.message_queue[0]
             bs = msg.get_bitstream()
             if self.arbitration_bit_index < len(bs):
                 bit = bs[self.arbitration_bit_index]
-            else:
-                bit = 1  # if out-of-range => recessive
-            bits_from_nodes.append((node, bit))
+            else: #wont be the case but still
+                bit = 1 
+            bits_from_nodes.append((nd, bit))
 
-        # Determine dominant bit
-        bit_values = [bit for (n, bit) in bits_from_nodes]
-        dominant_bit = min(bit_values)  # 0 is dominant
-
-        # Keep only the nodes that sent dominant_bit; losers => mode=RECEIVING
-        new_list = []
-        for (node, val) in bits_from_nodes:
-            if val == dominant_bit:
-                new_list.append(node)
-            else:
-                node.mode = RECEIVING  # lost arbitration
-
+        bit_values = [val for (n,val) in bits_from_nodes]
+        dominant_bit = min(bit_values)
         self.current_bit = dominant_bit
 
-        # Debug
-        remain_ids = [n.node_id for n in new_list]
-        print(f"Arbitration bit {self.arbitration_bit_index}: {dominant_bit}; remain={remain_ids}")
+        new_contenders = []
+        for (nd, val) in bits_from_nodes:
+            if val == dominant_bit:
+                new_contenders.append(nd)
+            else:
+                nd.mode = RECEIVING  # lost arbitration
 
-        if len(new_list) == 1:
-            # winner
-            self.current_winner = new_list[0]
-            self.arbitration_contenders.clear()
-            print(f"Arbitration done. Node {self.current_winner.node_id} won.")
+        remain_ids = [nd.node_id for nd in new_contenders]
+        print(f"Arbitration bit {self.arbitration_bit_index}: {dominant_bit}, remain={remain_ids}")
+
+        if len(new_contenders) == 1:
+            self.current_winner = new_contenders[0]
+            print(f"Arbitration done => Node {self.current_winner.node_id} won.")
             self.arbitration_in_progress = False
             self.in_arbitration = False
-            self.current_winner.current_bit_index = self.arbitration_bit_index + 1
-            #self.current_bit_index = self.arbitration_bit_index + 1
+            self.current_winner.current_bit_index = self.arbitration_bit_index +1
+            self.arbitration_contenders.clear()
             self.arbitration_bit_index = 0
         else:
-            self.arbitration_contenders = new_list
+            self.arbitration_contenders = new_contenders
             self.arbitration_bit_index += 1
 
     def transmit_one_data_bit(self, node):
-        """
-        Transmit exactly 1 data bit from node's message.
-        Check for errors bit-by-bit (bit_error, ack_error, etc.).
-        If we see an error => broadcast error, increment counters, node -> WAITING.
-        Also handle the ACK slot if we reached that bit index => set ack_slot=0 if no ack error.
-        """
+        if node.state == BUS_OFF:
+            return
         node.mode = TRANSMITTING
         bit = node.transmit_bit()
         if bit is None:
-            # either done or error
             self.current_bit = 1
             return
 
-        # set bus current bit
         self.current_bit = bit
+        print(f"Node {node.node_id} => data bit {node.current_bit_index -1} = {bit}")
 
-        # Debug:
-        print(f"Node {node.node_id} => bus bit {node.current_bit_index -1} = {bit}")
-
-        # Deliver this bit to others
-        for other in self.nodes:
-            if other != node:
-                other.process_received_bit(node.message_queue[0], node)
-
-        # Check if this bit is the "ACK slot"
         msg = node.message_queue[0]
-        ack_index = msg.get_ack_index()  # bit index for ACK slot
-        # node.current_bit_index-1 is the bit we *just* transmitted
-        if (node.current_bit_index -1) == ack_index:
-            # If there's no ack_error => set ack_slot=0
-            # If there *is* ack_error => it's already set to 1 in can_message
-            if msg.error_type == "ack_error":
-                print("ACK Error => ack_slot remains 1.")
-            else:
-                msg.ack_slot = 0  # normal ACK
+        for nd in self.nodes:
+            if nd != node and nd.state != BUS_OFF:
+                nd.process_received_bit(msg, node)
 
-        # Also check if this bit is error_bit_index for bit_error, stuff_error, etc. 
-        # But usually that logic is in the node's transmit_bit() or process_received_bit().
-        # We can do a final check here, e.g. if node.current_bit_index-1 == message.error_bit_index:
-        #    handle it.  But let's keep it in the node’s code or process_received_bit.
+        ack_idx = msg.get_ack_index()
+        if (node.current_bit_index) == ack_idx:
+            if msg.error_type == "ack_error":
+                msg.ack_slot = 1 
+                #print(f"ACK Error => ack_slot stays 1.")
+            else:
+                msg.ack_slot = 0  # normal ack if no problem 
+                print(f"Node {node.node_id} => ack_slot=0")
 
     def finalize_message(self, node):
-        """
-        Once a node finishes transmitting => pop from queue, reset mode, done.
-        """
-        print("finish1")
-        print(f"Node msg queue: {node.message_queue}")
-        if node.message_queue[0].error_type == None:
-            if isinstance(node.message_queue[0], DataFrame) or isinstance(node.message_queue[0], RemoteFrame):
-                for node in self.nodes:
-                    if node.mode == TRANSMITTING:
-                        node.transmit_error_counter -= 1
-                    elif node.mode == RECEIVING:
-                        node.receive_error_counter -= 1
-        print(f"Node msg queue: {node.message_queue}")
+        if not node.message_queue:
+            return
+        
+        if isinstance(node.message_queue[0], ErrorFrame):
+            for node_inc in self.nodes:
+                if node_inc.mode == RECEIVING:
+                    node_inc.increment_receive_error()
+                elif node_inc.mode == TRANSMITTING:
+                    node_inc.increment_transmit_error()            
+
         msg = node.message_queue[0]
         node.message_queue.pop(0)
         node.stop_transmitting()
-        print(f"Node {node.node_id} finished sending {msg} => node WAITING.")
-        for nodes in self.nodes:
-            nodes.mode = WAITING
 
-        self.error_reported = False
+        # decrement counters because no error 
+        if msg.error_type is None and isinstance(msg, (DataFrame, RemoteFrame)):
+            node.decrement_transmit_error()
+            for nd in self.nodes:
+                if nd != node and nd.state != BUS_OFF and nd.mode == RECEIVING:
+                    nd.decrement_receive_error()
+
+        print(f"bistream: {msg.get_bitstream()}")
+        print(f"Node {node.node_id} => finished sending {msg}. Waiting now.")
+        for nd in self.nodes:
+            if nd.state != BUS_OFF:
+                nd.mode = WAITING
+        
+        if msg.error_type != None and node.state != BUS_OFF:
+            #add the msg back if there was an error at the end of the queue
+            node.message_queue.append(msg)
+
+        self.current_winner = None
+        if isinstance(msg, RemoteFrame):
+            self.overload_request = False
+        elif isinstance(msg, ErrorFrame):
+            self.error_reported = False
 
     def broadcast_error_frame(self, error_type, message=None):
         if self.error_reported:
-            return 
-        
-        eligible_receivers = [node for node in self.nodes if node.mode == RECEIVING and node.state != BUS_OFF]
-        for node in self.nodes:
-            if node.mode == TRANSMITTING:
-                sender_node = node
+            return
+
+        reporter_node = None
+        for nd in self.nodes:
+            if nd.mode == TRANSMITTING and nd.state != BUS_OFF:
+                reporter_node = nd
                 break
-        print(f"Sender node: {sender_node.node_id}")
-        #sender_node = sender_node[0] if sender_node else None
-        self.current_bitstream.clear()
-        self.bitstream_display.clear()
+        if not reporter_node and message: 
+            if message.sender_id:
+                fallback = [x for x in self.nodes if x.node_id==message.sender_id and x.state != BUS_OFF]
+                if fallback:
+                    reporter_node = fallback[0]
+        if not reporter_node:
+            listening_nodes = [x for x in self.nodes if x.mode == RECEIVING and x.state != BUS_OFF]
+            if listening_nodes:
+                reporter_node = random.choice(listening_nodes)
 
-        print("here1")
-        if error_type == "bit_error" and message:
-            reporter_node = sender_node 
-            print("here2")
-            print(f"Node {sender_node.node_id} detected a Bit Monitoring Error at Bit {message.error_bit_index}.")
-            print(f"Broadcasting error frame for bit error.")
-        elif eligible_receivers:
-            reporter_node = random.choice(eligible_receivers)
-            if message:
-                print(f"Node {reporter_node.node_id} detected the {error_type} error in the message {message.identifier} and is reporting it.")
-                print(f"Broadcasting error frame for {error_type}.")
-            else: 
-                print(f"Node {reporter_node.node_id} detected a generic error and is reporting it.")
-                print(f"Broadcasting error frame.")
+        if not reporter_node:
+            print("No valid reporter node found for error frame => skipping.")
+            return
 
-        # Increment error counters based on node modes
-        print("here3")
-        for node in self.nodes:
-            if node.mode == RECEIVING:
-                node.increment_receive_error()
-                print(f"Node {node.node_id} -> TEC: {node.transmit_error_counter}; REC: {node.receive_error_counter}")
-            elif node.mode == TRANSMITTING:
-                node.increment_transmit_error()
-                print(f"Node {node.node_id} -> TEC: {node.transmit_error_counter}; REC: {node.receive_error_counter}")
+        print(f"Node {reporter_node.node_id} => broadcasting error frame: {error_type}")
+        
+        # increment counters bc of the errors; maybe should od it after the error frame is transmitted? TODO!!!
+        for nd in self.nodes:
+            if nd.state == BUS_OFF:
+                continue
+            if nd == reporter_node and nd.mode == TRANSMITTING:
+                #nd.increment_transmit_error()
+                nd.current_bit_index = 0
+            elif nd.mode == RECEIVING:
+                #nd.increment_receive_error()
+                pass
+
+        err_frame = ErrorFrame(sent_by=reporter_node.node_id)
+        reporter_node.message_queue.insert(0, err_frame)
+        self.current_winner = reporter_node
+
+        for nd in self.nodes:
+            if nd.state != BUS_OFF:
+                if nd == reporter_node:
+                    nd.mode = TRANSMITTING
+                else:
+                    nd.mode = RECEIVING
 
         self.error_reported = True
-        self.reset_nodes_after_error()
-        print("here4")
-        if sender_node:
-            sender_node.stop_transmitting()
-
-        for node in self.nodes:
-            node.mode = WAITING
-
-        print("here5")
-        self.current_winner = reporter_node
         self.state = BUSY
-
-        # Transmit the ErrorFrame
-        print("here6")
-        error_frame = ErrorFrame(sent_by=reporter_node)
-        reporter_node.message_queue.insert(0, error_frame)
-        print(f"message queue: {reporter_node.message_queue}")
-
-    def reset_nodes_after_error(self):
-        for node in self.nodes:
-            node.mode = WAITING
-        self.state = IDLE
 
     def broadcast_overload_frame(self, sender=None):
         print("Broadcasting overload frame.")
         if not sender:
-            sender = random.choice(self.nodes) 
-            while sender.mode == BUS_OFF:
-                sender = random.choice(self.nodes)
+            active = [n for n in self.nodes if n.state!=BUS_OFF]
+            if not active:
+                print("No node available for OverloadFrame.")
+                return
+            sender = random.choice(active)
 
-        overload_frame = OverloadFrame(sent_by=sender)
-        sender.message_queue.insert(0, overload_frame)
-        for node in self.nodes:
-            node.handle_overload_frame()
-        print("Overload frame processing complete.")
+        overload = OverloadFrame(sent_by=sender.node_id)
+        sender.message_queue.insert(0, overload)
+
+        for nd in self.nodes:
+            if nd.state!=BUS_OFF:
+                if nd==sender:
+                    nd.mode=TRANSMITTING
+                else:
+                    nd.mode=RECEIVING
+
+        self.current_winner = sender
+        self.overload_request = True
+        self.arbitration_in_progress = False
+        self.state = BUSY
+        print(f"Node {sender.node_id} => Overload frame inserted => future partial sending.")
+
+    def reset_nodes_after_error(self):
+        for nd in self.nodes:
+            if nd.state!=BUS_OFF:
+                nd.mode = WAITING
+        self.state = IDLE
