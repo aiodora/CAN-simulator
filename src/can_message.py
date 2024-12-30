@@ -77,6 +77,22 @@ class CANMessage:
             last_bit = bit
         stuffed_bits.append(last_bit)
         return stuffed_bits
+    
+    def unstuff_bitstream(self, bitstream):
+        unstuffed_bits = []
+        consecutive_bits = 1
+        last_bit = bitstream[0]
+        for bit in bitstream[1:]:
+            if bit == last_bit:
+                consecutive_bits += 1
+            else:
+                consecutive_bits = 1
+            unstuffed_bits.append(last_bit)
+            if consecutive_bits == 6:
+                consecutive_bits = 0
+            last_bit = bit
+        unstuffed_bits.append(last_bit)
+        return unstuffed_bits
 
     def get_bitstream(self):
         if self.transmitted_bitstream is not None:
@@ -136,7 +152,7 @@ class CANMessage:
         return bitstream.copy()
 
     def get_ack_index(self):
-        # base_length = 1 + 11 + 1 + 6 + 15 + 1  # SOF + ID + RTR + Control + CRC + CRC Delimiter
+        # base_length = 1 + 11 + 1 + 6 + 15 + 1  #not doing this bc of the bit stuffing
         # data_length = 8 * len(self.data_field)
         # ack_index = base_length + data_length 
         ack_index = len(self.get_bitstream()) - 11

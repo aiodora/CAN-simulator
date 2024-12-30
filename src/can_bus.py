@@ -294,3 +294,21 @@ class CANBus:
             if nd.state!=BUS_OFF:
                 nd.mode = WAITING
         self.state = IDLE
+
+    def reset_bus(self):
+        for nd in self.nodes:
+            nd.reset_node()
+        self.current_bit = 1
+        self.in_arbitration = False
+        self.error = False
+        self.transmission_queue.clear()
+        self.current_bitstream.clear()
+        self.bitstream_display.clear()
+        self.state = IDLE
+        self.error_reported = False
+        self.overload_request = False
+
+        self.arbitration_in_progress = False
+        self.arbitration_bit_index = 0
+        self.current_winner = None
+        self.arbitration_contenders.clear()
