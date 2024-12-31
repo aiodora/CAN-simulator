@@ -174,7 +174,6 @@ class CANBus:
                 #print(f"ACK Error => ack_slot stays 1.")
             else:
                 msg.ack_slot = 0  # normal ack if no problem 
-                print(f"Node {node.node_id} => ack_slot=0")
 
     def finalize_message(self, node):
         if not node.message_queue:
@@ -198,15 +197,14 @@ class CANBus:
                 if nd != node and nd.state != BUS_OFF and nd.mode == RECEIVING:
                     nd.decrement_receive_error()
 
-        print(f"bistream: {msg.get_bitstream()}")
-        print(f"Node {node.node_id} => finished sending {msg}. Waiting now.")
         for nd in self.nodes:
             if nd.state != BUS_OFF:
                 nd.mode = WAITING
         
         if msg.error_type != None and node.state != BUS_OFF:
             #add the msg back if there was an error at the end of the queue
-            node.message_queue.append(msg)
+            if msg.retransmit_error: 
+                node.message_queue.append(msg)
 
         self.current_winner = None
         if isinstance(msg, RemoteFrame):
@@ -239,7 +237,7 @@ class CANBus:
 
         print(f"Node {reporter_node.node_id} => broadcasting error frame: {error_type}")
         
-        # increment counters bc of the errors; maybe should od it after the error frame is transmitted? TODO!!!
+        # increment counters bc of the errors; maybe should od it after the error frame is transmitted? TODO!!! ✔️
         for nd in self.nodes:
             if nd.state == BUS_OFF:
                 continue
@@ -253,6 +251,8 @@ class CANBus:
         err_frame = ErrorFrame(sent_by=reporter_node.node_id)
         reporter_node.message_queue.insert(0, err_frame)
         self.current_winner = reporter_node
+        print(f"Node {reporter_node.node_id} => Error frame inserted => future partial sending.")
+        print(f"{reporter_node.node_id} => {reporter_node.message_queue[0]}")
 
         for nd in self.nodes:
             if nd.state != BUS_OFF:

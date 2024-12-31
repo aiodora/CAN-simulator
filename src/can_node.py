@@ -10,7 +10,6 @@ BUS_OFF = "Bus Off"
 ERROR_PASSIVE = "Error Passive"
 ERROR_ACTIVE = "Error Active"
 
-
 class CANNode:
     def __init__(self, node_id, bus=None, produced_ids=None, filters=None,
                  message_interval=0.025, node_comp="None"):
@@ -38,6 +37,10 @@ class CANNode:
 
     def add_message_to_queue(self, message):
         self.message_queue.append(message)
+        self.reorder_message_queue()
+
+    def reorder_message_queue(self):
+        self.message_queue.sort(key=lambda x: x.identifier)
 
     def set_component(self, node_comp):
         self.node_comp = node_comp
@@ -68,12 +71,10 @@ class CANNode:
             print("Invalid frame type specified.")
             return
 
-        # Optional forced error injection
         if error_type:
             print(f"Injecting {error_type} error into message.")
             self.error_handler.inject_error(error_type, msg)
         elif interactive and random.random() < 0.1:
-            # 10% chance of random error
             random_err = random.choice(["bit_error","stuff_error","crc_error","ack_error","form_error"])
             print(f"Randomly injecting {random_err} error into message.")
             self.error_handler.inject_error(random_err, msg)
@@ -82,11 +83,6 @@ class CANNode:
         self.mode = TRANSMITTING
 
     def transmit_bit(self):
-        """
-        Return exactly one bit from the front message, if any.
-        If node is BUS_OFF, or no bits => None.
-        If forced bit_error => broadcast error frame, stop.
-        """
         if self.state == BUS_OFF:
             return None
 
@@ -101,7 +97,7 @@ class CANNode:
             if (self.mode == TRANSMITTING 
                 and not self.bus.in_arbitration
                 and msg.error_type == "bit_error"
-                and self.current_bit_index == msg.error_bit_index):
+                and self.current_bit_index == msg.error_bit_index + 1):
                 print(f"Node {self.node_id}: forced bit_error at bit {self.current_bit_index}")
                 self.bus.broadcast_error_frame("bit_error", msg)
                 self.stop_transmitting()
@@ -113,13 +109,6 @@ class CANNode:
         return None
 
     def receive_message(self, message):
-        """
-        Called after arbitration if the node is a receiver of the final message.
-        If node is BUS_OFF => we do nothing.
-        If ID not in filters => ignore.
-        If there's an error => broadcast error frame
-        else => normal ACK
-        """
         if self.state == BUS_OFF:
             return
 
@@ -128,7 +117,6 @@ class CANNode:
         else:
             print(f"Node {self.node_id} received message with ID {message.identifier}.")
 
-        # Check error_type in message
         if message.error_type == "stuff_error":
             print(f"Node {self.node_id} => detected a Bit Stuffing Error.")
             self.bus.broadcast_error_frame("stuff_error", message)
@@ -156,19 +144,19 @@ class CANNode:
             return True
 
         current_bit_index = winner_node.current_bit_index - 1
-        if message.error_type == "ack_error" and current_bit_index == message.error_bit_index:
+        if message.error_type == "ack_error" and current_bit_index == message.error_bit_index + 1:
             print(f"Node {self.node_id} => detected ack_error at bit {current_bit_index}")
             self.bus.broadcast_error_frame("ack_error", message)
             return False
-        if message.error_type == "stuff_error" and current_bit_index == message.error_bit_index:
+        if message.error_type == "stuff_error" and current_bit_index == message.error_bit_index + 1:
             print(f"Node {self.node_id} => detected stuff_error at bit {current_bit_index}")
             self.bus.broadcast_error_frame("stuff_error", message)
             return False
-        if message.error_type == "crc_error" and current_bit_index == message.error_bit_index:
+        if message.error_type == "crc_error" and current_bit_index == message.error_bit_index + 1:
             print(f"Node {self.node_id} => detected crc_error at bit {current_bit_index}")
             self.bus.broadcast_error_frame("crc_error", message)
             return False
-        if message.error_type == "form_error" and current_bit_index == message.error_bit_index:
+        if message.error_type == "form_error" and current_bit_index == message.error_bit_index + 1:
             print(f"Node {self.node_id} => detected form_error at bit {current_bit_index}")
             self.bus.broadcast_error_frame("form_error", message)
             return False
@@ -176,26 +164,15 @@ class CANNode:
         return True
 
     def detect_and_handle_error(self, message):
-        """
-        Called if the bus tries to see if there's an error in the message
-        or if we want to detect error. Usually the bus calls broadcast_error_frame 
-        if it sees message.error_type != None, etc.
-        """
         if self.error_handler.detect_error(message.error_type, message):
             self.bus.broadcast_error_frame(message.error_type, message)
             return True
         return False
 
     def handle_overload_frame(self):
-        # Overload frames => typically 6 dominant bits, etc. 
-        # We'll just simulate a short delay
         time.sleep(0.1)
 
     def handle_error_frame(self, error_type):
-        """
-        If the bus broadcasts an error frame => all non-bus-off nodes 
-        increment TE or RE depending on mode.
-        """
         if self.state == BUS_OFF:
             return
         if self.mode == TRANSMITTING:
