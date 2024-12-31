@@ -454,23 +454,9 @@ class Playground(ctk.CTkFrame):
                     if start_info:
                         start_clock, msg_id = start_info
                         if msg.identifier:
-                            self.app.log_panel.add_log(
-                                f"Node {node_id} sent message of type {msg.frame_type} frame with ID {msg_id} "
-                                f"(decimal={msg_id}) from clock {start_clock} to clock {self.clock}."
-                            )
-                            self.app.log_panel.previous_logs.append(
-                                f"Node {node_id} sent message of type {msg.frame_type} frame with ID {msg_id} "
-                                f"(decimal={msg_id}) from clock {start_clock} to clock {self.clock}."
-                            )
+                            self.app.log_panel.previous_logs.insert(0, f"Node {node_id} sent message of type {msg.frame_type} frame with ID {msg_id} from clock {start_clock} to clock {self.clock}.")
                         else: 
-                            self.app.log_panel.add_log(
-                                f"Node {node_id} sent message of type {msg.frame_type} frame "
-                                f"from clock {start_clock} to clock {self.clock}."
-                            )
-                            self.app.log_panel.previous_logs.append(
-                                f"Node {node_id} sent message of type {msg.frame_type} frame "
-                                f"from clock {start_clock} to clock {self.clock}."
-                            )
+                            self.app.log_panel.previous_logs.insert(0, f"Node {node_id} sent message of type {msg.frame_type} frame from clock {start_clock} to clock {self.clock}.")
 
                         if isinstance(msg, DataFrame) or isinstance(msg, RemoteFrame):
                             if msg.error_type == None:
@@ -525,6 +511,9 @@ class Playground(ctk.CTkFrame):
                 
                 self.app.log_panel.add_log(f"{str_manage}")
                 self.app.log_panel.add_log(f"{field_str}")
+                self.app.log_panel.add_log(f"\n")
+                for log in self.app.log_panel.previous_logs:
+                    self.app.log_panel.add_log(log)
         else: #more than one tranmsitting node; append the min bit sent by the transmitting nodes
             if len(tx_nodes) > 1:
                 self.arbitration += f"{self.bus.current_bit}"
@@ -533,8 +522,9 @@ class Playground(ctk.CTkFrame):
         # if self.app.log_panel.previous_logs:
         #     self.app.log_panel.add_log(line for line in self.app.log_panel.previous_logs)
 
-        if self.app.playground.previous_frame:
-            self.app.log_panel.add_log(f"Previous Frame: {self.app.playground.previous_frame}")
+        if len(self.app.log_panel.previous_logs) > 0:
+            for log in self.app.playground.previous_frame:
+                self.app.log_panel.add_log(f"{log}")
 
     def format_bitfields(self, msg, partial_bits):
         if isinstance(msg, ErrorFrame):
@@ -802,11 +792,11 @@ class PredefinedScenarios(ctk.CTkFrame):
         )
         self.arbitration_btn.pack(fill="x", pady=5)
 
-        self.node_failure_btn = ctk.CTkButton(
-            scenario_menu, text="Node Failure Test",
-            command=self.select_node_failure
-        )
-        self.node_failure_btn.pack(fill="x", pady=5)
+        # self.node_failure_btn = ctk.CTkButton(
+        #     scenario_menu, text="Node Failure Test",
+        #     command=self.select_node_failure
+        # )
+        # self.node_failure_btn.pack(fill="x", pady=5)
 
     def initialize_predefined_scenarios(self):
         component_names = list(COMPONENTS.keys())
@@ -1142,8 +1132,10 @@ class InteractiveSimulation(ctk.CTkFrame):
 
         control_row = ctk.CTkFrame(left_column)
         control_row.pack(fill="x", pady=5)
-        ctk.CTkButton(control_row, text="Run", command=self.run_simulation).pack(side="left", padx=5)
-        ctk.CTkButton(control_row, text="Pause", command=self.pause_simulation).pack(side="left", padx=5)
+        self.run_btn = ctk.CTkButton(control_row, text="Run", command=self.run_simulation)
+        self.run_btn.pack(side="left", padx=5)
+        self.pause_btn = ctk.CTkButton(control_row, text="Pause", command=self.pause_simulation)
+        self.pause_btn.pack(side="left", padx=5)
         ctk.CTkButton(control_row, text="Reset", command=self.reset_simulation).pack(side="right", padx=5)
 
         interactive_menu = ctk.CTkFrame(left_column)
