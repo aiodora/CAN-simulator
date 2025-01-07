@@ -26,6 +26,7 @@ class CANNode:
         self.receive_error_counter = 0
         self.current_bit_index = 0
         self.node_comp = node_comp
+        self.error_detected = False
 
         self.error_handler = CANErrorHandler()
 
@@ -114,6 +115,7 @@ class CANNode:
 
         if message.identifier not in self.filters:
             print(f"Node {self.node_id} ignored message with ID {message.identifier}.")
+            return
         else:
             print(f"Node {self.node_id} received message with ID {message.identifier}.")
 

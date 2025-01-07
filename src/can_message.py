@@ -214,7 +214,7 @@ class CANMessage:
     def corrupt_crc(self):
         self.crc ^= 0x1  
         self.error_type = "crc_error"
-        self.error_bit_index = self.get_crc_bit_index() + 14 
+        self.error_bit_index = len(self.get_bitstream()) - 14
         print(f"CRC error injected by flipping bit at index {self.error_bit_index}.")
 
         bitstream = self.get_bitstream()

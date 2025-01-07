@@ -2,6 +2,7 @@ import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
 from tkinter import HORIZONTAL, simpledialog
 import tkinter as tk
+from tkinter import ttk
 import random
 import time
 
@@ -43,11 +44,13 @@ class CANSimulatorApp(ctk.CTk):
 
     def show_predefined_scenarios(self):
         #reset everything 
+        self.interactive_simulation.reset_simulation()
         self.playground.reset()
         self.clear_scenario_frames()
         self.predefined_scenarios.grid(row=0, column=0, sticky="ns", padx=10, pady=10)
 
     def show_interactive_simulation(self):
+        self.predefined_scenarios.reset_scenario()
         self.playground.reset()
         self.clear_scenario_frames()
         self.interactive_simulation.grid(row=0, column=0, sticky="ns", padx=10, pady=10)
@@ -104,8 +107,8 @@ class Playground(ctk.CTkFrame):
 
         # add label next to clock label that tells if you press arrow keys (up/down) to increase/decrease speed
         self.canvas.create_text(
-            150, 80, text="(Press UP/DOWN keys to adjust speed)",
-            fill="white",
+            175, 80, text="(Press UP/DOWN keys to adjust speed)",
+            fill="lightgrey",
             font=("Arial", 12),
             tag="speed_label"
         )
@@ -370,7 +373,6 @@ class Playground(ctk.CTkFrame):
         
         if node.mode == TRANSMITTING:
             if frame_id:
-                print(cnt)
                 if cnt > 1:
                     self.canvas.itemconfig(frame_id, fill="#f5c71a")
                 else:
@@ -388,6 +390,9 @@ class Playground(ctk.CTkFrame):
                     if cnt > 1:
                         self.canvas.itemconfig(filter_id, fill="yellow")
                     elif cnt == 1:
+                        print(msg)
+                        print(msg.get_bitstream())
+                        print(msg.sections)
                         if idx <= msg.sections["rtr_start"]:
                             self.canvas.itemconfig(filter_id, fill="#f5c71a")
                         else:
@@ -411,12 +416,13 @@ class Playground(ctk.CTkFrame):
         #maybe we have more msg at the same time
         while self.clock in self.schedule_times:
             node = random.choice(list(self.nodes.values()))
-            data = [random.randint(0, 255) for _ in range(random.randint(0, 8))]
-            msg = DataFrame(identifier=random.choice(node.produced_ids), sent_by=node.node_id, data=data)
+            data = [random.randint(0, 255) for _ in range(random.randint(1, 8))]
+            msg = CANMessage(identifier=random.choice(node.produced_ids), sent_by=node.node_id, data=data)
             node.add_message_to_queue(msg)
 
             #remove first occurence of the clock
             self.schedule_times.remove(self.clock)
+            self.schedule_times.append(self.clock + 100)
         if self.clock_running: 
             self.clock += 1
             self.display_clock()
@@ -442,42 +448,23 @@ class Playground(ctk.CTkFrame):
                 if node_id not in self.transmit_start_times:
                     if node.message_queue:
                         msg = node.message_queue[0]
-                        self.transmit_start_times[node_id] = (self.clock, msg.identifier)
+                        if node.current_bit_index == 1:
+                            self.transmit_start_times[node_id] = self.clock
+                            print(self.clock)
+                            print(f"started transmission of msg {msg.identifier} at {self.clock}")
 
-            # If node just finished a message (meaning is_transmission_complete == True),
-            # we log it with start_time..end_time
-            if node.has_pending_message():
+            if node.has_pending_message() and node.state != BUS_OFF:
                 msg = node.message_queue[0]
-                if node.is_transmission_complete():
-                    self.arbitration = ""
-                    start_info = self.transmit_start_times.pop(node_id, None)
-                    if start_info:
-                        start_clock, msg_id = start_info
-                        if msg.identifier:
-                            self.app.log_panel.previous_logs.insert(0, f"Node {node_id} sent message of type {msg.frame_type} frame with ID {msg_id} from clock {start_clock} to clock {self.clock}.")
-                        else: 
-                            self.app.log_panel.previous_logs.insert(0, f"Node {node_id} sent message of type {msg.frame_type} frame from clock {start_clock} to clock {self.clock}.")
-
-                        if isinstance(msg, DataFrame) or isinstance(msg, RemoteFrame):
-                            if msg.error_type == None:
-                                self.previous_frame = msg.unstuff_bitstream
-                                self.previous_frame_type = msg.frame_type
-                                self.previous_error_type = None
-                                self.app.log_panel.add_log(f"Previous Frame: {self.previous_frame_type}; bitstream received by the nodes: {self.previous_frame}")
-                            else: 
-                                self.previous_frame = None
-                                self.previous_frame_type = msg.frame_type
-                                self.previous_error_type = msg.error_type
-                                self.app.log_panel.add_log(f"Previous Frame: {self.previous_frame_type} frame was corrupted! Error {self.previous_error_type} detected by the nodes.")
-                        else:
-                            self.previous_frame = None
-                            self.previous_frame_type = msg.frame_type
-                            self.app.log_panel.add_log(f"Previous Frame: {self.previous_frame_type}")
-
-                        #self.app.log_panel.add_log(f"Previous Frame: {msg.type_frame}; bitstream received by the nodes: {self.previous_frame}")
-                    
-                    node.message_queue.pop(0)
-                    node.stop_transmitting()
+                print(f"Node {node_id} has pending message: {msg}")
+                bitstream = ''.join(str(b) for b in msg.get_bitstream())
+                if msg.error_type:
+                    if node.current_bit_index == msg.error_bit_index:
+                        self.app.log_panel.previous_logs.insert(0, f"{msg.frame_type} frame sent by node {node_id} with ID={msg.identifier}. Error detected: {msg.error_type}. (unsuccessful transmission)")
+                elif node.current_bit_index >= len(msg.get_bitstream()) - 1:
+                    if msg.identifier:
+                        self.app.log_panel.previous_logs.insert(0, f"{msg.frame_type} frame sent by node {node_id} with ID={msg.identifier}. (successful transmission)\nBitstream: {bitstream}")
+                    else:
+                        self.app.log_panel.previous_logs.insert(0, f"{msg.frame_type} frame sent by node {node_id}. (successful transmission)")
 
     def update_bus_status(self):
         self.app.log_panel.clear_log()
@@ -505,15 +492,11 @@ class Playground(ctk.CTkFrame):
                 partial = bs[:idx]
 
                 #partial_str = "".join(str(b) for b in partial)
-                
                 field_str, str_manage = self.format_bitfields(msg, partial)
                 self.app.log_panel.add_log("Bus: BUSY")
                 
                 self.app.log_panel.add_log(f"{str_manage}")
                 self.app.log_panel.add_log(f"{field_str}")
-                self.app.log_panel.add_log(f"\n")
-                for log in self.app.log_panel.previous_logs:
-                    self.app.log_panel.add_log(log)
         else: #more than one tranmsitting node; append the min bit sent by the transmitting nodes
             if len(tx_nodes) > 1:
                 self.arbitration += f"{self.bus.current_bit}"
@@ -523,8 +506,8 @@ class Playground(ctk.CTkFrame):
         #     self.app.log_panel.add_log(line for line in self.app.log_panel.previous_logs)
 
         if len(self.app.log_panel.previous_logs) > 0:
-            for log in self.app.playground.previous_frame:
-                self.app.log_panel.add_log(f"{log}")
+            self.app.log_panel.add_log("\nPrevious Message:")
+            self.app.log_panel.add_log(self.app.log_panel.previous_logs[0])
 
     def format_bitfields(self, msg, partial_bits):
         if isinstance(msg, ErrorFrame):
@@ -605,7 +588,7 @@ class Playground(ctk.CTkFrame):
             def b2s(b): return "".join(str(x) for x in b)
             rf_str = f"{b2s(sof)} {b2s(id_bits)} {b2s(rtr)} {b2s(ctrl)} {b2s(crc_field)} {b2s(crc_delimiter)} {b2s(ack_field)} {b2s(ack_delimiter)} {b2s(eof)}"
 
-            receivers = [n for n in self.nodes.values() if n.mode == RECEIVING]
+            receivers = [n for n in self.nodes.values() if n.mode == RECEIVING and msg.identifier in n.filters]
             receivers_str = ", ".join(str(n.node_id) for n in receivers) 
             str_manage = ""
             if sect_name == "Intermission Bits":
@@ -638,37 +621,48 @@ class Playground(ctk.CTkFrame):
             intermission = partial_bits[(crc_end+10):]
 
             sect_name = ""
-            error_found = ""
+            error_found = None
             transmitting_idx = len(partial_bits) - 1
+            pos_error = 0
+            
             if transmitting_idx == msg.error_bit_index:
                 error_found = f"ERROR DETECTED: {msg.error_type} at bit {transmitting_idx}"
             if transmitting_idx == 0:
                 sect_name = "Start of Frame Bit"
             elif transmitting_idx < id_end:
+                pos_error = 1
                 sect_name = "Identifier Bits"
             elif transmitting_idx < id_end + 1:
+                pos_error = 2
                 sect_name = "Remote Transmission Request Bit"
-            elif transmitting_idx < ctrl_end:
+            elif transmitting_idx < data_start:
+                pos_error = 3
                 sect_name = "Control Field Bits"
             elif transmitting_idx < data_end:
+                pos_error = 4
                 sect_name = "Data Field Bits"
             elif transmitting_idx < crc_end:
+                pos_error = 5
                 sect_name = "Cyclic Redundancy Check Bits"
             elif transmitting_idx < (crc_end+1):
+                pos_error = 6
                 sect_name = "CRC Delimiter Bit"
                 msg.ack_slot = 0
             elif transmitting_idx < (crc_end+2):
+                pos_error = 7
                 sect_name = "Acknowledgement Bit"
             elif transmitting_idx < (crc_end+3):
+                pos_error = 8
                 sect_name = "Acknowledgement Delimiter Bit"
             elif transmitting_idx < (crc_end+10):
+                pos_error = 9
                 sect_name = "End of Frame Bits"
             else:
                 sect_name = "Intermission Bits"
 
             def b2s(b): return "".join(str(x) for x in b)
             df_str = f"{b2s(sof)} {b2s(id_bits)} {b2s(rtr)} {b2s(ctrl)} {b2s(data)} {b2s(crc_field)} {b2s(crc_delimiter)} {b2s(ack_field)} {b2s(ack_delimiter)} {b2s(eof)}"
-            receivers = [n for n in self.nodes.values() if n.mode == RECEIVING]
+            receivers = [n for n in self.nodes.values() if n.mode == RECEIVING and msg.identifier in n.filters]
             receivers_str = ", ".join(str(n.node_id) for n in receivers)
             str_manage = ""
             if sect_name == "Intermission Bits":
@@ -681,8 +675,11 @@ class Playground(ctk.CTkFrame):
                     time.sleep(1)
                     str_manage += f" Nodes {receivers_str} sent ACK bit."
 
-            if error_found:
+            spaces = ""
+            if error_found is not None:
                 str_manage = f"{error_found}"
+                spaces = " " * (pos_error + transmitting_idx)
+                df_str += f"\n{spaces}^"
 
             return df_str, str_manage
         else:
@@ -705,7 +702,7 @@ class LogPanel(ctk.CTkFrame):
         self.log_frame.grid_rowconfigure(0, weight=1)
         self.log_frame.grid_columnconfigure(0, weight=1)
 
-        self.log_text.configure(font=("Roboto", 14))
+        self.log_text.configure(font=("Courier New", 14))
 
         self.previous_logs = []
 
@@ -739,7 +736,7 @@ class PredefinedScenarios(ctk.CTkFrame):
 
         title_frame = ctk.CTkFrame(self)
         title_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
-        ctk.CTkLabel(title_frame, text="Predefined Scenarios in CAN", font=("Arial", 20, "bold")).pack(side="left", padx=10)
+        ctk.CTkLabel(title_frame, text="Concepts in CAN", font=("Arial", 20, "bold")).pack(side="left", padx=10)
         ctk.CTkButton(title_frame, text="Go to Interactive Simulation", command=self.master.show_interactive_simulation).pack(side="right", padx=10)
 
         self.left_column = ctk.CTkFrame(self)
@@ -792,12 +789,6 @@ class PredefinedScenarios(ctk.CTkFrame):
         )
         self.arbitration_btn.pack(fill="x", pady=5)
 
-        # self.node_failure_btn = ctk.CTkButton(
-        #     scenario_menu, text="Node Failure Test",
-        #     command=self.select_node_failure
-        # )
-        # self.node_failure_btn.pack(fill="x", pady=5)
-
     def initialize_predefined_scenarios(self):
         component_names = list(COMPONENTS.keys())
         for i in range(10):
@@ -807,38 +798,105 @@ class PredefinedScenarios(ctk.CTkFrame):
     def select_frame(self, frame_type):
         self.active_scenario = "frame"
         explanations = {
-            "Data Frame": "Demonstrates basic data transfer over CAN.",
-            "Remote Frame": "Requests data from another node in CAN.",
-            "Error Frame": "Demonstrates how error frames are broadcast if an error is detected.",
-            "Overload Frame": "Indicates a node is overloaded and needs extra delay."
+            "Data Frame": (
+                "Data Frame\n"
+                "Carries actual data between nodes in the CAN network, enabling communication of sensor readings, control commands, and other essential information.\n\n"
+                "Structure Details:\n"
+                "-Start of Frame (SOF): Marks the beginning of the frame.\n"
+                "-Arbitration Field: Contains the Identifier (11 bits) and RTR Bit (`0` for Data Frames), determining message priority.\n"
+                "-Control Field: Includes 4 bits specifying data length and reserved bits for extensions.\n"
+                "-Data Field: Holds 0 to 8 bytes of actual data payload.\n"
+                "-CRC Field: 15-bit CRC for error detection, followed by CRC Delimiter (1 recessive bit).\n"
+                "-Acknowledge Field: Allows nodes to acknowledge receipt with ACK Slot and Delimiter.\n"
+                "-End of Frame (EOF): Marks the end with 7 recessive bits.\n\n"
+                "-> Uses Bit Stuffing to ensures synchronization by inserting a bit of opposite polarity after five consecutive identical bits."
+            ),
+            "Remote Frame": (
+                "Remote Frame\n"
+                "Requests data from another node without sending any data itself.\n\n"
+                "Structure Details:\n"
+                "-Start of Frame (SOF): Indicates the start with 1 dominant bit.\n"
+                "-Arbitration Field: Contains the Identifier (11 bits) and RTR Bit (`1` for Remote Frames), determining message priority.\n"
+                "-Control Field: Includes 4 bits specifying the expected number of data bytes in the response.\n"
+                "-CRC Field: 15-bit CRC for error detection, followed by CRC Delimiter (1 recessive bit).\n"
+                "-Acknowledge Field: Allows nodes to acknowledge the request with ACK Slot and Delimiter (both recessive bits).\n"
+                "-End of Frame (EOF): Marks the end with 7 recessive bits.\n\n"
+                "-> Remote Frames do not carry a Data Field."
+            ),
+            "Error Frame": (
+                "Error Frame\n"
+                "Broadcasts error notifications to all nodes on the CAN network when an error is detected.\n\n"
+                "Structure Details:\n"
+                "-Error Flag: 6 dominant bits indicating an error.\n"
+                "-Error Delimiter: 8 recessive bits separating the Error Flag from other frames.\n\n"
+                "Error Handling Mechanism:\n"
+                "->Error Counters: Nodes maintain Transmit Error Counter (TEC) and Receive Error Counter (REC) to track errors.\n"
+                "->Error States: Transition through `Error Active`, `Error Passive`, and `Bus Off` based on error counts.\n\n"
+                "- Error Passive State: Signals issues without fully disconnecting.\n"
+                "- Bus Off State: Disconnects the node from the bus after excessive errors.\n\n"
+                "->Persistent errors leading to Bus Off indicate node failure."
+            ),
+            "Overload Frame": (
+                "Overload Frame\n"
+                "Signals that a node is temporarily overloaded and requires additional delay before processing more messages, ensuring efficient management of processing loads.\n\n"
+                "Structure Details:\n"
+                "-Overload Flag: 6 consecutive dominant bits indicating overload.\n"
+                "-Overload Delimiter: 8 recessive bits separating the Overload Flag from other frames.\n\n"
+            )
         }
         self.scenario_explanation.configure(
-            text=f"{frame_type} - {explanations.get(frame_type, '')}"
+            text=explanations.get(frame_type, "No explanation available for the selected frame type.")
         )
 
     def select_arbitration(self):
         self.active_scenario = "arbitration"
         self.scenario_explanation.configure(
-            text="Arbitration Test: Multiple nodes attempt to send simultaneously."
+            text="Arbitration Test\n\n"
+                "Tests the arbitration mechanism where multiple nodes attempt to send messages simultaneously, ensuring that the highest priority message is successfully transmitted without data loss.\n\n"
+                "->Collision Detection: Nodes monitor the bus while transmitting; if a node detects a different bit than it transmitted, it realizes it has lost arbitration and ceases transmission.\n"
+                "->Priority Determination: Based on the Identifier field; lower numerical values have higher priority.\n\n"
         )
 
     def select_error(self, error_type):
         self.active_scenario = "error"
         explanations = {
-            "Bit Monitor Error": "Occurs when the transmitter sees a different bit than it transmitted.",
-            "Cyclic Redundancy Check Error": "Occurs when the CRC validation fails.",
-            "Bit Stuff Error": "Occurs if more than 5 consecutive bits have the same level.",
-            "Form Error": "Occurs when a fixed format field contains an illegal value.",
-            "Acknowledgment Error": "Occurs when the transmitter doesn't get an ACK."
+            "Bit Monitor Error": (
+                "Bit Monitor Error\n\n"
+                "Happens when the transmitter detects a different bit level on the bus than the one it transmitted, indicating a collision or signal integrity issue.\n\n"
+                "->Error Counter Increment: TEC and REC are incremented for needed nodes.\n"
+                "->Retransmission: The frame is retransmitted until the nodes transmitting enters Bus Off state."
+            ),
+            "Cyclic Redundancy Check Error": (
+                "Cyclic Redundancy Check (CRC) Error\n\n"
+                "Occurs when the CRC validation fails, indicating that the received frame contains errors or has been corrupted during transmission.\n\n"
+                "->Error Counter Increment: Both TEC and REC are incremented.\n"
+                "->Retransmission: The frame is retransmitted until the nodes transmitting enters Bus Off state."
+            ),
+            "Bit Stuff Error": (
+                "Bit Stuff Error\n\n"
+                "Happens if more than five consecutive bits of the same polarity are detected, violating the bit stuffing rule designed to maintain synchronization.\n\n"
+                "->Error Counter Increment: Both TEC and REC are incremented.\n"
+                "->Synchronization Maintenance: Prevents long sequences of identical bits, ensuring proper timing and synchronization across nodes.\n"
+                "->Transmission Integrity: Detects and flags potential synchronization issues or intentional signal tampering."
+                "->Retransmission: The frame is retransmitted until the nodes transmitting enters Bus Off state."
+            ),
+            "Form Error": (
+                "Form Error\n\n"
+                "Occurs when a fixed format field within the CAN frame (Start of Frame, Delimiters, End of Frame) contains an illegal or unexpected value, such as incorrect delimiter bits or reserved field violations.\n\n"
+                "->Error Counter Increment: Both TEC and REC are incremented.\n"
+                "->Protocol Compliance: Ensures that all frames adhere to the CAN protocol specifications, maintaining network integrity. Thus the message will not be received by the intended recipient.\n"
+            ),
+            "Acknowledgment Error": (
+                "Acknowledgment (ACK) Error\n\n"
+                "Happens when the transmitter does not receive an acknowledgment (ACK) from any node after sending a frame, indicating that no node has successfully received the frame.\n\n"
+                "->Error Counter Increment: TEC is incremented.\n"
+                "->Network Issues: Could signal that no nodes are available to receive messages, potentially indicating a network outage or severe congestion.\n"
+                "->Retransmission: The frame is retransmitted until the nodes transmitting enters Bus Off state."
+            )
         }
+        explanation = explanations.get(error_type, "No explanation available for the selected error type.")
         self.scenario_explanation.configure(
-            text=f"{error_type} - {explanations.get(error_type, '')}"
-        )
-
-    def select_node_failure(self):
-        self.active_scenario = "node_failure"
-        self.scenario_explanation.configure(
-            text="Node Failure Test: Tests transitions to error-passive or bus-off states."
+            text=explanation + "\n\nIf errors are not resolved, the node may transition to an Error Passive state. Continued errors can lead to a Bus Off state, resulting in node failure and disconnection from the CAN network."
         )
 
     def disable_other_scenarios(self, active_scenario):
@@ -930,10 +988,6 @@ class PredefinedScenarios(ctk.CTkFrame):
             data = [random.randint(0, 255) for _ in range(random.randint(1, 8))]
 
             msg = CANMessage(identifier=random.choice(node.produced_ids), sent_by=node.node_id, data=data, frame_type="Data", error_type=error_type)
-            print(f"bitstream: {msg.get_bitstream()}")
-            print(f"Error type: {msg.error_type}")
-            print(f"error index: {msg.error_bit_index}")
-            print(f"msg bitstream: {msg.get_bitstream()}")
             node.add_message_to_queue(msg)
 
             # if not node.has_pending_message():
@@ -955,9 +1009,6 @@ class PredefinedScenarios(ctk.CTkFrame):
             mapped_error = error_mapping.get(error_type)
             if mapped_error:
                 getattr(msg, f"corrupt_{mapped_error}")()
-                # print(
-                #     f"[Scenario] Injected {error_type} into Node {node.node_id}'s message ID {msg.identifier}."
-                # )
                 print(f"error index: {msg.error_bit_index}")
             else:
                 self.log_panel.add_log("Invalid or unsupported error type.")
@@ -1122,9 +1173,9 @@ class InteractiveSimulation(ctk.CTkFrame):
 
         title_frame = ctk.CTkFrame(self)
         title_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
-        ctk.CTkLabel(title_frame, text="Interactive Simulation of CAN", 
+        ctk.CTkLabel(title_frame, text="Interactive Simulation", 
                      font=("Arial", 20, "bold")).pack(side="left", padx=10)
-        ctk.CTkButton(title_frame, text="Go to Predefined Scenarios",
+        ctk.CTkButton(title_frame, text="Go to Basic Concepts",
                       command=self.master.show_predefined_scenarios).pack(side="right", padx=10)
 
         left_column = ctk.CTkFrame(self)
@@ -1140,51 +1191,36 @@ class InteractiveSimulation(ctk.CTkFrame):
 
         interactive_menu = ctk.CTkFrame(left_column)
         interactive_menu.pack(fill="x", pady=10)
-        ctk.CTkButton(interactive_menu, text="Edit Node Configuration",
-                      command=self.edit_node_config).pack(fill="x", pady=5)
-        ctk.CTkButton(interactive_menu, text="Send Custom Message",
-                      command=self.open_custom_message_window).pack(fill="x", pady=5)
+        ctk.CTkButton(interactive_menu, text="Edit Node Configuration", command=self.edit_node_config).pack(fill="x", pady=5)
+        self.manage_msg = ctk.CTkButton(interactive_menu, text="Manage Messages", command=self.open_custom_message_window)
+        self.manage_msg.pack(fill="x", pady=5)
 
         load_menu = ctk.CTkFrame(left_column)
         load_menu.pack(fill="x", pady=10)
         ctk.CTkLabel(load_menu, text="Message Load:").pack(anchor="w")
         self.load_dropdown = ctk.CTkOptionMenu(
             load_menu,
-            values=[LOW.capitalize(), MEDIUM.capitalize(), HIGH.capitalize()],
+            values=[LOW.capitalize(), MEDIUM.capitalize(), HIGH.capitalize(), "No messages".capitalize()],
             command=self.set_message_load
         )
         self.load_dropdown.set(MEDIUM.capitalize())
         self.load_dropdown.pack(fill="x", pady=5)
 
-        self.nodes_queues = ctk.CTkFrame(left_column)
-        self.nodes_queues.pack(fill="both", expand=True, pady=10)
-        #for all nodes in self.playground nodes show the message queue
-
-        #err = ctk.CTkCheckBox(self, text="Random Error Injection", variable=self.error_interactive, onvalue=1, offvalue=0)
-
     def open_custom_message_window(self):
-        if not self.playground.nodes:
-            self.log_panel.add_log("No nodes available to send messages.")
-            return
-
         window = ctk.CTkToplevel(self)
-        window.title("Send Custom Message")
-        window.geometry("400x450")
+        window.title("Send Message")
+        window.geometry("300x200")
 
         ctk.CTkLabel(window, text="Sender Node:").pack(pady=5)
-        sender_var = ctk.StringVar(value="Select a Node")
+        sender_var = tk.StringVar(value="Select a Node")
         sender_menu = ctk.CTkOptionMenu(
             window, variable=sender_var,
             values=[f"Node {node_id}" for node_id in self.playground.nodes.keys()]
         )
         sender_menu.pack(pady=5)
 
-        ctk.CTkLabel(window, text="Data (comma-separated bytes):").pack(pady=5)
-        data_entry = ctk.CTkEntry(window)
-        data_entry.pack(pady=5)
-
-        ctk.CTkLabel(window, text="Error (optional):").pack(pady=5)
-        error_var = ctk.StringVar(value="None")
+        ctk.CTkLabel(window, text="Error Type:").pack(pady=5)
+        error_var = tk.StringVar(value="None")
         error_menu = ctk.CTkOptionMenu(
             window, variable=error_var,
             values=["None", "Bit Monitoring", "Bit Stuffing",
@@ -1193,39 +1229,26 @@ class InteractiveSimulation(ctk.CTkFrame):
         error_menu.pack(pady=5)
 
         def send_message():
-            sender_selection = sender_var.get()
-            if sender_selection == "Select a Node":
-                self.log_panel.add_log("No sender node selected.")
+            selection = sender_var.get()
+            if not selection.startswith("Node "):
+                self.log_panel.add_log("No valid sender node selected.")
                 return
 
-            try:
-                sender_id = int(sender_selection.split()[1])
-            except ValueError:
-                self.log_panel.add_log("Invalid sender node ID.")
+            node_id = int(selection.split()[1])
+            sender_node = self.playground.nodes.get(node_id)
+            if not sender_node:
+                self.log_panel.add_log(f"Sender Node {node_id} not found.")
                 return
 
-            error_type = error_var.get()
-            data_text = data_entry.get()
-            try:
-                data = [int(byte.strip()) for byte in data_text.split(",") if byte.strip()]
-            except ValueError:
-                self.log_panel.add_log("Invalid data. Enter comma-separated integers.")
-                return
-            
-            if len(data) > 8:
-                self.log_panel.add_log("Data length exceeds 8 bytes.")
-                return
-
-            sender_node = self.playground.nodes[sender_id]
+            err = error_var.get()
+            data = random.choices(range(256), k=random.randint(1, 8))
             message = DataFrame(
                 identifier=random.choice(sender_node.produced_ids),
-                sent_by=sender_id,
+                sent_by=node_id,
                 data=data
             )
-            sender_node.add_message_to_queue(message)
-            #self.log_panel.add_log(f"[Interactive] Node {sender_id} queued DataFrame ID={message.identifier} with data={data}")
 
-            if error_type and error_type != "None":
+            if err != "None":
                 error_map = {
                     "Bit Monitoring": "bit",
                     "Bit Stuffing": "stuff",
@@ -1233,15 +1256,15 @@ class InteractiveSimulation(ctk.CTkFrame):
                     "CRC Error": "crc",
                     "Form Error": "form"
                 }
-                mapped_err = error_map.get(error_type)
-                if mapped_err:
-                    getattr(message, f"corrupt_{mapped_err}")()
-                    #self.log_panel.add_log(f"[Interactive] Injected {error_type} into message ID {message.identifier}.")
+                mapped = error_map.get(err)
+                if mapped and hasattr(message, f"corrupt_{mapped}"):
+                    getattr(message, f"corrupt_{mapped}")()
 
-            window.destroy()
-            self.playground.start_clock()
+            sender_node.add_message_to_queue(message)
+            self.log_panel.add_log(f"Queued message from Node {node_id}, Error={err}, ID={message.identifier}")
 
-        ctk.CTkButton(window, text="Send", command=send_message).pack(pady=20)
+        send_btn = ctk.CTkButton(window, text="Send Message", command=send_message)
+        send_btn.pack(pady=10)
 
     def set_message_load(self, load_level):
         self.message_load = load_level.lower()
@@ -1280,6 +1303,7 @@ class InteractiveSimulation(ctk.CTkFrame):
             #     print(f"Node {node} mode: {self.playground.nodes[node].mode} and message queue: {self.playground.nodes[node].message_queue}")
             nid.current_bit_index = 0
             nid.message_queue.clear()
+            print(nid.message_queue)
             self.playground.update_node_info(node)
         self.playground.bus.state = "Idle"
         self.playground.bus.reset_bus()
@@ -1291,37 +1315,136 @@ class InteractiveSimulation(ctk.CTkFrame):
         self.playground.previous_frame = None
         self.log_panel.previous_logs.clear()
 
+    # def edit_node_config(self):
+    #     window = ctk.CTkToplevel(self)
+    #     window.title("Edit Node Configuration")
+    #     window.geometry("400x400")
+
+    #     ctk.CTkLabel(window, text="Select Node:").pack(pady=5)
+    #     node_var = ctk.StringVar(value="Select a Node")
+    #     node_dropdown = ctk.CTkOptionMenu(
+    #         window, variable=node_var,
+    #         values=[f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"]
+    #     )
+    #     node_dropdown.pack(pady=5)
+
+    #     ctk.CTkLabel(window, text="Component:").pack(pady=5)
+    #     component_var = ctk.StringVar(value="None")
+    #     component_dropdown = ctk.CTkOptionMenu(
+    #         window, variable=component_var,
+    #         values=list(COMPONENTS.keys()) + ["None"]
+    #     )
+    #     component_dropdown.pack(pady=5)
+
+    #     ctk.CTkLabel(window, text="Filters (comma-separated IDs):").pack(pady=5)
+    #     filter_entry = ctk.CTkEntry(window)
+    #     filter_entry.pack(pady=5)
+
+    #     def add_new_node():
+    #         comp_name = component_var.get() if component_var.get() in COMPONENTS else None
+    #         self.playground.add_node(component_name=comp_name)
+    #         node_dropdown.configure(
+    #             values=[f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"]
+    #         )
+    #         self.log_panel.add_log("Added new node.")
+
+    #     def delete_node():
+    #         selection = node_var.get()
+    #         if selection.startswith("Node "):
+    #             node_id = int(selection.split()[1])
+    #             if node_id in self.playground.nodes:
+    #                 del self.playground.nodes[node_id]
+    #                 del self.playground.node_positions[node_id]
+    #                 if node_id in self.playground.node_visuals:
+    #                     for item in self.playground.node_visuals[node_id]:
+    #                         self.playground.canvas.delete(item)
+    #                     del self.playground.node_visuals[node_id]
+    #                 if node_id in self.playground.node_info_labels:
+    #                     self.playground.canvas.delete(self.playground.node_info_labels[node_id])
+    #                     del self.playground.node_info_labels[node_id]
+    #                 self.playground.draw_nodes()
+    #                 self.log_panel.add_log(f"Deleted Node {node_id}.")
+    #                 window.destroy()
+    #             else:
+    #                 self.log_panel.add_log(f"Node {node_id} not found.")
+    #         else:
+    #             self.log_panel.add_log("No valid node selected to delete.")
+
+    #     def save_changes():
+    #         selection = node_var.get()
+    #         if selection.startswith("Node "):
+    #             node_id = int(selection.split()[1])
+    #             if node_id in self.playground.nodes:
+    #                 comp_name = component_var.get()
+    #                 if comp_name in COMPONENTS:
+    #                     self.playground.assign_node_to_component(node_id, comp_name)
+    #                 else:
+    #                     if comp_name != "None":
+    #                         self.log_panel.add_log("Invalid component selected.")
+    #                     else: 
+    #                         self.playground.nodes[node_id].component = None
+    #                         self.playground.nodes[node_id].produced_ids = list(range(0, 2048))
+    #                         self.playground.nodes[node_id].filters = list(range(0, 2048))
+
+    #                 filters_text = filter_entry.get()
+    #                 if filters_text.strip():
+    #                     try:
+    #                         filters = [int(x.strip()) for x in filters_text.split(",")]
+    #                         self.playground.nodes[node_id].filters = filters
+    #                     except ValueError:
+    #                         self.log_panel.add_log("Invalid filter list.")
+    #                 self.playground.update_node_info(node_id)
+    #                 self.playground.draw_nodes()
+    #                 self.log_panel.add_log(f"Saved changes for Node {node_id}.")
+
+    #     ctk.CTkButton(window, text="Delete Node", command=delete_node).pack(pady=5)
+    #     ctk.CTkButton(window, text="Add New Node", command=add_new_node).pack(pady=5)
+    #     ctk.CTkButton(window, text="Save Changes", command=save_changes).pack(pady=5)
+
     def edit_node_config(self):
         window = ctk.CTkToplevel(self)
         window.title("Edit Node Configuration")
-        window.geometry("400x400")
+        window.geometry("450x480")
+        window.configure(bg="#2e2e2e")
 
-        ctk.CTkLabel(window, text="Select Node:").pack(pady=5)
+        title_label = ctk.CTkLabel(window, text="Node Configuration", text_color="white", bg_color="#2e2e2e", font=("Helvetica", 16, "bold"))
+        title_label.pack(pady=5)
+
+        instructions_label = ctk.CTkLabel(window, 
+                                        text="• Select an existing node or choose 'Add New Node'\n"
+                                            "• Assign a component (optional)\n"
+                                            "• Click 'Save Changes' to apply\n"
+                                            "• Or 'Delete Node' to remove a node",
+                                        text_color="white",
+                                        bg_color="#2e2e2e")
+        instructions_label.pack(pady=5)
+
         node_var = ctk.StringVar(value="Select a Node")
+        node_values = [f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"]
         node_dropdown = ctk.CTkOptionMenu(
             window, variable=node_var,
-            values=[f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"]
+            values=node_values,
+            dropdown_fg_color="#4c4c4c"
         )
-        node_dropdown.pack(pady=5)
+        node_dropdown.pack(pady=5, fill="x")
 
-        ctk.CTkLabel(window, text="Component:").pack(pady=5)
         component_var = ctk.StringVar(value="None")
         component_dropdown = ctk.CTkOptionMenu(
             window, variable=component_var,
-            values=list(COMPONENTS.keys()) + ["None"]
+            values=list(COMPONENTS.keys()) + ["None"],
+            dropdown_fg_color="#4c4c4c"
         )
-        component_dropdown.pack(pady=5)
+        component_dropdown.pack(pady=5, fill="x")
 
-        ctk.CTkLabel(window, text="Filters (comma-separated IDs):").pack(pady=5)
-        filter_entry = ctk.CTkEntry(window)
-        filter_entry.pack(pady=5)
+        # filter_label = ctk.CTkLabel(window, text="Filters (comma-separated IDs):", text_color="white", bg_color="#2e2e2e")
+        # filter_label.pack(pady=5, anchor="w")
+        # filter_entry = ctk.CTkEntry(window, placeholder_text="e.g. 100, 200, 300")
+        # filter_entry.pack(pady=5, fill="x")
 
         def add_new_node():
             comp_name = component_var.get() if component_var.get() in COMPONENTS else None
             self.playground.add_node(component_name=comp_name)
-            node_dropdown.configure(
-                values=[f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"]
-            )
+            node_dropdown.configure(values=[f"Node {nid}" for nid in self.playground.nodes.keys()] + ["Add New Node"])
             self.log_panel.add_log("Added new node.")
 
         def delete_node():
@@ -1332,8 +1455,11 @@ class InteractiveSimulation(ctk.CTkFrame):
                     del self.playground.nodes[node_id]
                     del self.playground.node_positions[node_id]
                     if node_id in self.playground.node_visuals:
+                        for item in self.playground.node_visuals[node_id]:
+                            self.playground.canvas.delete(item)
                         del self.playground.node_visuals[node_id]
                     if node_id in self.playground.node_info_labels:
+                        self.playground.canvas.delete(self.playground.node_info_labels[node_id])
                         del self.playground.node_info_labels[node_id]
                     self.playground.draw_nodes()
                     self.log_panel.add_log(f"Deleted Node {node_id}.")
@@ -1352,23 +1478,35 @@ class InteractiveSimulation(ctk.CTkFrame):
                     if comp_name in COMPONENTS:
                         self.playground.assign_node_to_component(node_id, comp_name)
                     else:
-                        pass
+                        if comp_name != "None":
+                            self.log_panel.add_log("Invalid component selected.")
+                        else:
+                            self.playground.nodes[node_id].component = None
+                            self.playground.nodes[node_id].produced_ids = list(range(0, 2048))
+                            self.playground.nodes[node_id].filters = list(range(0, 2048))
 
-                    filters_text = filter_entry.get()
-                    if filters_text.strip():
-                        try:
-                            filters = [int(x.strip()) for x in filters_text.split(",")]
-                            self.playground.nodes[node_id].filters = filters
-                        except ValueError:
-                            self.log_panel.add_log("Invalid filter list.")
+                    # filters_text = filter_entry.get()
+                    # if filters_text.strip():
+                    #     try:
+                    #         filters = [int(x.strip()) for x in filters_text.split(",")]
+                    #         self.playground.nodes[node_id].filters = filters
+                    #     except ValueError:
+                    #         self.log_panel.add_log("Invalid filter list.")
                     self.playground.update_node_info(node_id)
+                    self.playground.draw_nodes()
                     self.log_panel.add_log(f"Saved changes for Node {node_id}.")
-            elif selection == "Add New Node":
-                add_new_node()
 
-        ctk.CTkButton(window, text="Save Changes", command=save_changes).pack(pady=5)
-        ctk.CTkButton(window, text="Delete Node", command=delete_node).pack(pady=5)
-        ctk.CTkButton(window, text="Add New Node", command=add_new_node).pack(pady=5)
+        btn_frame = ctk.CTkFrame(window, fg_color="#2e2e2e")
+        btn_frame.pack(pady=10, fill="x")
+
+        btn_delete = ctk.CTkButton(btn_frame, text="Delete Node", command=delete_node, fg_color="#5c5c5c", hover_color="#6c6c6c")
+        btn_delete.pack(side="left", padx=5, expand=True, fill="x")
+
+        btn_add = ctk.CTkButton(btn_frame, text="Add New Node", command=add_new_node, fg_color="#5c5c5c", hover_color="#6c6c6c")
+        btn_add.pack(side="left", padx=5, expand=True, fill="x")
+
+        btn_save = ctk.CTkButton(btn_frame, text="Save Changes", command=save_changes, fg_color="#5c5c5c", hover_color="#6c6c6c")
+        btn_save.pack(side="left", padx=5, expand=True, fill="x")
 
     def select_node_dialog(self, prompt):
         if not self.playground.nodes:
@@ -1397,16 +1535,22 @@ class InteractiveSimulation(ctk.CTkFrame):
             num_messages = int(len(self.playground.nodes) / 3)
         elif self.message_load == MEDIUM:
             num_messages = len(self.playground.nodes) 
-        else:
+        elif self.message_load == HIGH:
             num_messages = len(self.playground.nodes) * 3
+        else: 
+            num_messages = 0
 
         #if the load changes, keep previous messages just add more like from that time t we have to send in fct of the load till t+100 the correspeonding nr of messages
         #but add to each node at diff clock cycle the messages
-        t1 = self.playground.clock
-        t2 = self.playground.clock + 99
-        self.playground.schedule_times = [random.randint(t1, t2) for _ in range(num_messages)]
+        if num_messages > 0:
+            t1 = self.playground.clock
+            t2 = self.playground.clock + 99
+            #make uniform times (values from all intervals where interval = (t2-t1)/num_messages)
+            interval = int((t2 - t1) / num_messages)
+            for i in (range(num_messages + 1)):
+                self.playground.schedule_times.append(t1 + i * interval)
 
-        print(f"{self.playground.schedule_times}")
+            print(f"{self.playground.schedule_times}")
 
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
